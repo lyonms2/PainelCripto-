@@ -9,9 +9,9 @@ class CacheManager:
     
     @staticmethod
     @st.cache_data(ttl=300)  # 5 minutos
-    def get_cached_data(api_function, *args, **kwargs):
+    def get_cached_data(_api_function, *args, **kwargs):
         """Cache genérico para funções da API"""
-        return api_function(*args, **kwargs)
+        return _api_function(*args, **kwargs)
     
     @staticmethod
     def clear_all_cache():
