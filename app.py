@@ -1,8 +1,15 @@
 import streamlit as st
-import requests
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
+import time
+
+# Importar módulos personalizados
+from kucoin_api import KuCoinAPI, process_ticker_data
+from indicators import MarketMetrics, MarketIndicators, TechnicalAnalysis
+from charts import CryptoCharts
+from utils import (
+    CacheManager, DataValidator, UIComponents, 
+    SessionManager, DataExporter, PerformanceMonitor, ErrorHandler
+)
 
 # Configuração da página
 st.set_page_config(
@@ -12,294 +19,510 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-def get_kucoin_data():
-    """Obter dados das criptomoedas da KuCoin"""
-    try:
-        response = requests.get("https://api.kucoin.com/api/v1/market/allTickers", timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            return data.get('data', {}).get('ticker', [])
-        else:
-            st.error(f"Erro na API: {response.status_code}")
-            return []
-    except requests.exceptions.RequestException as e:
-        st.error(f"Erro de conexão: {str(e)}")
-        return []
-    except Exception as e:
-        st.error(f"Erro inesperado: {str(e)}")
-        return []
+# CSS personalizado
+st.markdown("""
+<style>
+.main-header {
+    text-align: center;
+    padding: 1rem 0;
+    background: linear-gradient(90deg, #1e3c72 0%, #2a5298 100%);
+    color: white;
+    border-radius: 10px;
+    margin-bottom: 2rem;
+}
 
-def process_data(raw_data):
-    """Processar dados brutos da API"""
-    if not raw_data:
-        return pd.DataFrame()
+.metric-card {
+    background: white;
+    padding: 1rem;
+    border-radius: 10px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    border-left: 4px solid #1e3c72;
+}
+
+.stTabs [data-baseweb="tab-list"] {
+    gap: 2rem;
+}
+
+.stTabs [data-baseweb="tab"] {
+    padding: 0.5rem 1rem;
+    background-color: #f0f2f6;
+    border-radius: 5px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+class CryptoDashboardApp:
+    """Classe principal do aplicativo"""
     
-    try:
-        df = pd.DataFrame(raw_data)
+    def __init__(self):
+        self.api = KuCoinAPI()
+        self.charts = CryptoCharts()
+        self.metrics = MarketMetrics()
         
-        # Filtrar apenas pares USDT para simplicidade
-        df = df[df['symbol'].str.contains('-USDT$', regex=True, na=False)]
+        # Inicializar sessão
+        SessionManager.init_session_state()
+    
+    @PerformanceMonitor.measure_time
+    def load_data(self):
+        """Carregar dados das criptomoedas"""
+        try:
+            with UIComponents.create_loading_spinner("🔄 Carregando dados da KuCoin..."):
+                # Obter dados via cache
+                raw_data = CacheManager.get_cached_data(
+                    self.api.get_all_tickers
+                )
+                
+                # Validar resposta
+                if not DataValidator.validate_api_response(raw_data):
+                    return pd.DataFrame()
+                
+                # Processar dados
+                df = process_ticker_data(raw_data)
+                
+                # Validar DataFrame
+                required_columns = ['symbol', 'last', 'changeRate', 'volValue']
+                if not DataValidator.validate_dataframe(df, required_columns):
+                    return pd.DataFrame()
+                
+                # Atualizar timestamp
+                SessionManager.update_last_refresh()
+                
+                return df
         
-        # Converter colunas numéricas essenciais
-        numeric_cols = ['last', 'changeRate', 'volValue', 'vol']
-        for col in numeric_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
+        except Exception as e:
+            ErrorHandler.handle_api_error(e, "carregamento de dados")
+            return pd.DataFrame()
+    
+    def render_header(self):
+        """Renderizar cabeçalho do dashboard"""
+        st.markdown("""
+        <div class="main-header">
+            <h1>🚀 KuCoin Cryptocurrency Dashboard</h1>
+            <p>Dashboard em tempo real com dados de criptomoedas da KuCoin</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    def render_sidebar(self, df):
+        """Renderizar sidebar com filtros e controles"""
+        st.sidebar.title("⚙️ Painel de Controle")
         
-        # Filtrar dados válidos
-        df = df.dropna(subset=['last', 'changeRate', 'volValue'])
-        df = df[df['volValue'] > 0]  # Volume deve ser positivo
+        # Informações de atualização
+        with st.sidebar.expander("📊 Status", expanded=True):
+            last_update = SessionManager.get_time_since_update()
+            st.info(f"⏱️ Última atualização: {last_update:.0f}s atrás")
+            
+            if not df.empty:
+                st.success(f"✅ {len(df)} moedas carregadas")
+            else:
+                st.error("❌ Sem dados disponíveis")
         
-        # Ordenar por volume
-        df = df.sort_values('volValue', ascending=False)
-        
-        return df
-        
-    except Exception as e:
-        st.error(f"Erro ao processar dados: {str(e)}")
-        return pd.DataFrame()
-
-def format_currency(value):
-    """Formatar valores monetários"""
-    try:
-        val = float(value)
-        if val >= 1e9:
-            return f"${val/1e9:.2f}B"
-        elif val >= 1e6:
-            return f"${val/1e6:.2f}M"
-        elif val >= 1e3:
-            return f"${val/1e3:.2f}K"
-        else:
-            return f"${val:.2f}"
-    except (ValueError, TypeError):
-        return "N/A"
-
-def format_percentage(value):
-    """Formatar percentuais"""
-    try:
-        return f"{float(value)*100:+.2f}%"
-    except (ValueError, TypeError):
-        return "N/A"
-
-@st.cache_data(ttl=300)  # Cache por 5 minutos
-def load_crypto_data():
-    """Carregar e processar dados com cache"""
-    raw_data = get_kucoin_data()
-    return process_data(raw_data)
-
-def create_volume_chart(df):
-    """Criar gráfico de volume"""
-    try:
-        top_20 = df.head(20)
-        fig = px.bar(
-            top_20,
-            x='symbol',
-            y='volValue',
-            title="Top 20 - Volume de Negociação (24h)",
-            color='changeRate',
-            color_continuous_scale='RdYlGn',
-            labels={'volValue': 'Volume (USD)', 'symbol': 'Símbolo'}
+        # Auto-refresh
+        st.sidebar.markdown("---")
+        auto_refresh = st.sidebar.checkbox(
+            "🔄 Auto-refresh (30s)",
+            value=st.session_state.auto_refresh,
+            help="Atualizar dados automaticamente a cada 30 segundos"
         )
-        fig.update_layout(
-            xaxis_tickangle=-45,
-            height=500,
-            showlegend=False
-        )
-        return fig
-    except Exception as e:
-        st.error(f"Erro ao criar gráfico: {str(e)}")
-        return None
-
-def create_distribution_chart(df):
-    """Criar gráfico de distribuição de mudanças"""
-    try:
-        # Categorizar mudanças
-        conditions = [
-            df['changeRate'] < -0.1,
-            (df['changeRate'] >= -0.1) & (df['changeRate'] < -0.05),
-            (df['changeRate'] >= -0.05) & (df['changeRate'] < 0),
-            (df['changeRate'] >= 0) & (df['changeRate'] < 0.05),
-            (df['changeRate'] >= 0.05) & (df['changeRate'] < 0.1),
-            df['changeRate'] >= 0.1
-        ]
+        st.session_state.auto_refresh = auto_refresh
         
-        choices = ['< -10%', '-10% a -5%', '-5% a 0%', '0% a 5%', '5% a 10%', '> 10%']
-        df['change_category'] = pd.Series(dtype='object')
+        # Botões de controle
+        col1, col2 = st.sidebar.columns(2)
+        with col1:
+            if st.button("🔄 Atualizar", type="primary"):
+                CacheManager.clear_all_cache()
+                st.rerun()
         
-        for i, condition in enumerate(conditions):
-            df.loc[condition, 'change_category'] = choices[i]
+        with col2:
+            if st.button("🧹 Limpar Cache"):
+                CacheManager.clear_all_cache()
         
-        # Contar categorias
-        counts = df['change_category'].value_counts()
+        # Filtros
+        if not df.empty:
+            return UIComponents.create_sidebar_filters(df)
         
-        fig = px.pie(
-            values=counts.values,
-            names=counts.index,
-            title="Distribuição de Mudanças de Preço (24h)",
-            color_discrete_sequence=px.colors.qualitative.Set3
-        )
-        return fig
-    except Exception as e:
-        st.error(f"Erro ao criar gráfico de distribuição: {str(e)}")
-        return None
-
-def main():
-    st.title("🚀 KuCoin Cryptocurrency Dashboard")
-    st.markdown("Dashboard em tempo real com dados de criptomoedas da KuCoin")
+        return {
+            'volume_filter': 100000,
+            'price_change_filter': 'Todos',
+            'top_n': 20
+        }
     
-    # Sidebar
-    st.sidebar.title("⚙️ Configurações")
+    def render_metrics_overview(self, df):
+        """Renderizar métricas principais"""
+        if df.empty:
+            st.warning("⚠️ Sem dados para mostrar métricas")
+            return
+        
+        st.subheader("📊 Visão Geral do Mercado")
+        
+        # Calcular métricas
+        market_summary = self.metrics.calculate_market_summary(df)
+        
+        # Primeira linha de métricas
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric(
+                "Total de Moedas",
+                market_summary['total_coins'],
+                help="Total de criptomoedas monitoradas"
+            )
+        
+        with col2:
+            st.metric(
+                "Em Alta",
+                market_summary['gainers'],
+                delta=f"{market_summary['gainers_pct']:.1f}%",
+                delta_color="normal"
+            )
+        
+        with col3:
+            st.metric(
+                "Em Baixa",
+                market_summary['losers'],
+                delta=f"-{market_summary['losers_pct']:.1f}%",
+                delta_color="inverse"
+            )
+        
+        with col4:
+            st.metric(
+                "Volume Total",
+                self.metrics.format_currency(market_summary['total_volume'])
+            )
+        
+        # Segunda linha de métricas
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric(
+                "Mudança Média",
+                self.metrics.format_percentage(market_summary['avg_change'])
+            )
+        
+        with col2:
+            st.metric(
+                "Mudança Mediana",
+                self.metrics.format_percentage(market_summary['median_change'])
+            )
+        
+        with col3:
+            st.metric(
+                "Dominância Volume Alta",
+                f"{market_summary['volume_dominance_up']:.1f}%"
+            )
+        
+        with col4:
+            volume_ratio = (market_summary['volume_gainers'] / 
+                          market_summary['volume_losers'] 
+                          if market_summary['volume_losers'] > 0 else 0)
+            st.metric(
+                "Ratio Vol. Alta/Baixa",
+                f"{volume_ratio:.2f}x"
+            )
     
-    # Filtro de volume mínimo
-    min_volume = st.sidebar.selectbox(
-        "Volume mínimo",
-        [0, 50000, 100000, 500000, 1000000],
-        index=2,
-        format_func=lambda x: f"${x:,}"
-    )
+    def render_main_tabs(self, df_filtered):
+        """Renderizar abas principais do dashboard"""
+        if df_filtered.empty:
+            ErrorHandler.show_fallback_message("Nenhuma moeda encontrada com os filtros aplicados")
+            return
+        
+        tab1, tab2, tab3, tab4 = st.tabs([
+            "🏆 Top Volume", 
+            "📈 Maiores Variações", 
+            "📊 Análise Técnica", 
+            "🔍 Busca Detalhada"
+        ])
+        
+        with tab1:
+            self.render_volume_tab(df_filtered)
+        
+        with tab2:
+            self.render_variations_tab(df_filtered)
+        
+        with tab3:
+            self.render_analysis_tab(df_filtered)
+        
+        with tab4:
+            self.render_search_tab(df_filtered)
     
-    # Carregar dados
-    with st.spinner("🔄 Carregando dados..."):
-        df = load_crypto_data()
-    
-    if df.empty:
-        st.error("❌ Não foi possível carregar os dados. Verifique sua conexão e tente novamente.")
-        st.stop()
-    
-    # Aplicar filtro de volume
-    df_filtered = df[df['volValue'] >= min_volume]
-    
-    if df_filtered.empty:
-        st.warning(f"⚠️ Nenhuma moeda encontrada com volume superior a {format_currency(min_volume)}")
-        st.stop()
-    
-    # Métricas principais
-    st.subheader("📊 Resumo do Mercado")
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("Total de Moedas", len(df_filtered))
-    
-    with col2:
-        gainers = len(df_filtered[df_filtered['changeRate'] > 0])
-        st.metric("Em Alta", gainers, delta=f"{gainers/len(df_filtered)*100:.1f}%")
-    
-    with col3:
-        losers = len(df_filtered[df_filtered['changeRate'] < 0])
-        st.metric("Em Baixa", losers, delta=f"-{losers/len(df_filtered)*100:.1f}%")
-    
-    with col4:
-        total_volume = df_filtered['volValue'].sum()
-        st.metric("Volume Total", format_currency(total_volume))
-    
-    # Tabs principais
-    tab1, tab2, tab3 = st.tabs(["🏆 Top Moedas", "📈 Maiores Variações", "📊 Análise"])
-    
-    with tab1:
-        st.subheader("Top 20 Criptomoedas por Volume")
+    def render_volume_tab(self, df):
+        """Renderizar aba de volume"""
+        st.subheader("🏆 Top Criptomoedas por Volume de Negociação")
         
         # Gráfico de volume
-        fig_volume = create_volume_chart(df_filtered)
+        fig_volume = self.charts.create_volume_chart(df, top_n=20)
         if fig_volume:
             st.plotly_chart(fig_volume, use_container_width=True)
         
         # Tabela detalhada
-        top_20 = df_filtered.head(20).copy()
-        top_20['Preço'] = top_20['last'].apply(lambda x: f"${x:.4f}")
-        top_20['Mudança 24h'] = top_20['changeRate'].apply(format_percentage)
-        top_20['Volume'] = top_20['volValue'].apply(format_currency)
+        col1, col2 = st.columns([3, 1])
         
-        display_df = top_20[['symbol', 'Preço', 'Mudança 24h', 'Volume']]
-        display_df.columns = ['Símbolo', 'Preço', 'Mudança 24h', 'Volume']
+        with col1:
+            st.markdown("### 📋 Dados Detalhados")
+            display_df = self.prepare_display_dataframe(df.head(20))
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
         
-        st.dataframe(display_df, use_container_width=True, hide_index=True)
+        with col2:
+            # Gráfico de distribuição
+            market_summary = self.metrics.calculate_market_summary(df)
+            fig_overview = self.charts.create_market_overview_chart(market_summary)
+            if fig_overview:
+                st.plotly_chart(fig_overview, use_container_width=True)
     
-    with tab2:
-        st.subheader("Maiores Variações nas Últimas 24h")
+    def render_variations_tab(self, df):
+        """Renderizar aba de variações"""
+        st.subheader("📈 Maiores Variações nas Últimas 24 Horas")
         
         col1, col2 = st.columns(2)
         
         with col1:
             st.markdown("### 🚀 Maiores Altas")
-            top_gainers = df_filtered.nlargest(10, 'changeRate').copy()
-            top_gainers['Preço'] = top_gainers['last'].apply(lambda x: f"${x:.4f}")
-            top_gainers['Mudança'] = top_gainers['changeRate'].apply(format_percentage)
-            
-            gainers_display = top_gainers[['symbol', 'Preço', 'Mudança']]
-            gainers_display.columns = ['Símbolo', 'Preço', 'Mudança']
+            top_gainers = df.nlargest(10, 'changeRate')
+            gainers_display = self.prepare_display_dataframe(top_gainers, ['symbol', 'last', 'changeRate', 'volValue'])
             st.dataframe(gainers_display, use_container_width=True, hide_index=True)
         
         with col2:
             st.markdown("### 📉 Maiores Baixas")
-            top_losers = df_filtered.nsmallest(10, 'changeRate').copy()
-            top_losers['Preço'] = top_losers['last'].apply(lambda x: f"${x:.4f}")
-            top_losers['Mudança'] = top_losers['changeRate'].apply(format_percentage)
-            
-            losers_display = top_losers[['symbol', 'Preço', 'Mudança']]
-            losers_display.columns = ['Símbolo', 'Preço', 'Mudança']
+            top_losers = df.nsmallest(10, 'changeRate')
+            losers_display = self.prepare_display_dataframe(top_losers, ['symbol', 'last', 'changeRate', 'volValue'])
             st.dataframe(losers_display, use_container_width=True, hide_index=True)
+        
+        # Gráfico comparativo
+        fig_gainers_losers = self.charts.create_top_gainers_losers_chart(df, n=10)
+        if fig_gainers_losers:
+            st.plotly_chart(fig_gainers_losers, use_container_width=True)
     
-    with tab3:
-        st.subheader("Análise de Distribuição do Mercado")
+    def render_analysis_tab(self, df):
+        """Renderizar aba de análise técnica"""
+        st.subheader("📊 Análise Técnica e Distribuição")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            # Gráfico de distribuição
-            fig_dist = create_distribution_chart(df_filtered)
+            # Gráfico de distribuição de mudanças
+            fig_dist = self.charts.create_price_change_distribution(df)
             if fig_dist:
                 st.plotly_chart(fig_dist, use_container_width=True)
         
         with col2:
-            # Estatísticas
-            st.markdown("### 📊 Estatísticas")
-            
-            avg_change = df_filtered['changeRate'].mean()
-            median_change = df_filtered['changeRate'].median()
-            std_change = df_filtered['changeRate'].std()
-            
-            st.metric("Mudança Média", format_percentage(avg_change))
-            st.metric("Mudança Mediana", format_percentage(median_change))
-            st.metric("Desvio Padrão", format_percentage(std_change))
-            
-            # Volume por faixa de mudança
-            st.markdown("### 💰 Volume por Performance")
-            volume_up = df_filtered[df_filtered['changeRate'] > 0]['volValue'].sum()
-            volume_down = df_filtered[df_filtered['changeRate'] < 0]['volValue'].sum()
-            
-            st.metric("Volume - Moedas em Alta", format_currency(volume_up))
-            st.metric("Volume - Moedas em Baixa", format_currency(volume_down))
+            # Scatter plot preço vs volume
+            fig_scatter = self.charts.create_price_vs_volume_scatter(df)
+            if fig_scatter:
+                st.plotly_chart(fig_scatter, use_container_width=True)
+        
+        # Heatmap
+        st.markdown("### 🔥 Heatmap de Performance")
+        fig_heatmap = self.charts.create_volume_heatmap(df, top_n=20)
+        if fig_heatmap:
+            st.plotly_chart(fig_heatmap, use_container_width=True)
     
-    # Busca específica
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("🔍 Busca Específica")
-    search_term = st.sidebar.text_input("Digite o símbolo (ex: BTC-USDT)")
+    def render_search_tab(self, df):
+        """Renderizar aba de busca detalhada"""
+        st.subheader("🔍 Análise Detalhada por Moeda")
+        
+        # Seleção de moeda
+        symbols = df['symbol'].tolist()
+        selected_symbol = st.selectbox(
+            "Selecione uma criptomoeda para análise detalhada:",
+            symbols,
+            help="Escolha uma moeda para ver gráficos e análises específicas"
+        )
+        
+        if selected_symbol:
+            # Dados da moeda selecionada
+            coin_data = df[df['symbol'] == selected_symbol].iloc[0]
+            
+            # Métricas da moeda
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric("Preço Atual", f"${coin_data['last']:.6f}")
+            
+            with col2:
+                st.metric(
+                    "Mudança 24h", 
+                    self.metrics.format_percentage(coin_data['changeRate']),
+                    delta=self.metrics.format_percentage(coin_data['changeRate'])
+                )
+            
+            with col3:
+                st.metric("Volume", self.metrics.format_currency(coin_data['volValue']))
+            
+            with col4:
+                st.metric("Alta/Baixa", f"${coin_data['high']:.6f} / ${coin_data['low']:.6f}")
+            
+            # Gráfico de candlestick (se disponível)
+            try:
+                with st.spinner("Carregando gráfico histórico..."):
+                    end_time = int(time.time())
+                    start_time = end_time - (24 * 60 * 60)  # 24 horas
+                    
+                    klines = self.api.get_klines(
+                        selected_symbol, 
+                        type_="1hour",
+                        start_at=start_time,
+                        end_at=end_time
+                    )
+                    
+                    fig_candlestick = self.charts.create_candlestick_chart(
+                        klines, 
+                        selected_symbol
+                    )
+                    
+                    if fig_candlestick:
+                        st.plotly_chart(fig_candlestick, use_container_width=True)
+                    else:
+                        st.info("💡 Gráfico histórico não disponível para esta moeda")
+            
+            except Exception as e:
+                st.warning(f"⚠️ Não foi possível carregar dados históricos: {str(e)}")
     
-    if search_term:
-        search_result = df_filtered[df_filtered['symbol'].str.contains(search_term.upper(), na=False)]
-        if not search_result.empty:
-            st.sidebar.success(f"✅ Encontrado: {search_term.upper()}")
-            coin_data = search_result.iloc[0]
-            st.sidebar.metric("Preço", f"${coin_data['last']:.4f}")
-            st.sidebar.metric("Mudança 24h", format_percentage(coin_data['changeRate']))
-            st.sidebar.metric("Volume", format_currency(coin_data['volValue']))
+    def prepare_display_dataframe(self, df, columns=None):
+        """Preparar DataFrame para exibição"""
+        if df.empty:
+            return df
+        
+        display_df = df.copy()
+        
+        # Selecionar colunas se especificado
+        if columns:
+            display_df = display_df[columns]
         else:
-            st.sidebar.warning(f"❌ {search_term} não encontrado")
+            display_df = display_df[['symbol', 'last', 'changeRate', 'volValue', 'high', 'low']]
+        
+        # Formatação
+        display_df = display_df.rename(columns={
+            'symbol': 'Símbolo',
+            'last': 'Preço',
+            'changeRate': 'Mudança 24h',
+            'volValue': 'Volume',
+            'high': 'Alta 24h',
+            'low': 'Baixa 24h'
+        })
+        
+        # Aplicar formatação
+        if 'Preço' in display_df.columns:
+            display_df['Preço'] = display_df['Preço'].apply(lambda x: f"${x:.6f}")
+        
+        if 'Mudança 24h' in display_df.columns:
+            display_df['Mudança 24h'] = display_df['Mudança 24h'].apply(self.metrics.format_percentage)
+        
+        if 'Volume' in display_df.columns:
+            display_df['Volume'] = display_df['Volume'].apply(self.metrics.format_currency)
+        
+        if 'Alta 24h' in display_df.columns:
+            display_df['Alta 24h'] = display_df['Alta 24h'].apply(lambda x: f"${x:.6f}")
+        
+        if 'Baixa 24h' in display_df.columns:
+            display_df['Baixa 24h'] = display_df['Baixa 24h'].apply(lambda x: f"${x:.6f}")
+        
+        return display_df
     
-    # Rodapé
-    st.markdown("---")
-    st.markdown(
-        """
-        **📊 KuCoin Crypto Dashboard** | Dados em tempo real da API pública da KuCoin  
-        ⚠️ *Apenas para fins informativos - não é aconselhamento financeiro*  
-        🔄 *Dados atualizados a cada 5 minutos*
-        """
-    )
+    def render_footer(self, df):
+        """Renderizar rodapé com informações adicionais"""
+        st.markdown("---")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown("""
+            **📊 KuCoin Crypto Dashboard**  
+            Dashboard profissional para análise de criptomoedas
+            """)
+        
+        with col2:
+            st.markdown("""
+            **🔄 Dados em Tempo Real**  
+            Atualizações automáticas via API da KuCoin
+            """)
+        
+        with col3:
+            # Botão de download
+            if not df.empty:
+                DataExporter.create_download_button(
+                    df.head(100), 
+                    f"kucoin_crypto_data_{int(time.time())}.csv",
+                    "📥 Baixar Top 100 CSV"
+                )
+        
+        st.markdown("""
+        <div style="text-align: center; padding: 1rem; color: #666; font-size: 0.8rem;">
+            ⚠️ <strong>Aviso:</strong> Este dashboard é apenas para fins informativos. 
+            Não constitui aconselhamento financeiro ou recomendação de investimento.
+            <br>
+            📡 Dados fornecidos pela API pública da KuCoin | 
+            🔄 Cache: 5 minutos | 
+            ⚡ Auto-refresh disponível
+        </div>
+        """, unsafe_allow_html=True)
     
-    # Botão de atualização manual
-    if st.button("🔄 Atualizar Dados Agora", type="primary"):
-        st.cache_data.clear()
-        st.rerun()
+    def check_auto_refresh(self):
+        """Verificar e executar auto-refresh se necessário"""
+        if SessionManager.should_auto_refresh(30):  # 30 segundos
+            st.rerun()
+    
+    def run(self):
+        """Executar aplicação principal"""
+        # Renderizar cabeçalho
+        self.render_header()
+        
+        # Carregar dados
+        df = self.load_data()
+        
+        # Renderizar sidebar e obter filtros
+        filters = self.render_sidebar(df)
+        
+        # Aplicar filtros
+        df_filtered = UIComponents.apply_filters(df, filters) if not df.empty else df
+        
+        # Verificar se há dados
+        if df.empty:
+            st.error("❌ Não foi possível carregar dados da KuCoin")
+            st.info("💡 Verifique sua conexão com a internet e tente novamente.")
+            
+            # Botão para tentar novamente
+            if st.button("🔄 Tentar Novamente", type="primary"):
+                CacheManager.clear_all_cache()
+                st.rerun()
+            
+            return
+        
+        # Renderizar métricas
+        self.render_metrics_overview(df_filtered)
+        
+        # Renderizar abas principais
+        self.render_main_tabs(df_filtered)
+        
+        # Mostrar métricas de performance (opcional)
+        if st.sidebar.checkbox("⚡ Mostrar Performance", value=False):
+            PerformanceMonitor.show_performance_metrics()
+        
+        # Renderizar rodapé
+        self.render_footer(df_filtered)
+        
+        # Verificar auto-refresh
+        if st.session_state.get('auto_refresh', False):
+            time.sleep(1)  # Pequena pausa para evitar loops muito rápidos
+            if SessionManager.should_auto_refresh(30):
+                st.rerun()
+
+
+def main():
+    """Função principal"""
+    try:
+        # Inicializar e executar aplicação
+        app = CryptoDashboardApp()
+        app.run()
+        
+    except Exception as e:
+        st.error("❌ Erro crítico na aplicação")
+        ErrorHandler.handle_api_error(e, "aplicação principal")
+        
+        # Opção de restart
+        if st.button("🔄 Reiniciar Aplicação", type="primary"):
+            CacheManager.clear_all_cache()
+            st.rerun()
+
 
 if __name__ == "__main__":
     main()
