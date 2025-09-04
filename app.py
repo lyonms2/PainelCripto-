@@ -18,6 +18,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Classes do indicador (copiadas do código anterior)
 class KucoinDataFetcher:
     """Fetcher de dados da KuCoin API pública"""
     
@@ -28,8 +29,9 @@ class KucoinDataFetcher:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
     
-    @st.cache_data(ttl=300)
+    @st.cache_data(ttl=300)  # Cache por 5 minutos
     def get_popular_symbols(_self) -> List[str]:
+        """Retorna símbolos populares para facilitar a seleção"""
         popular = [
             'BTC-USDT', 'ETH-USDT', 'BNB-USDT', 'ADA-USDT', 'SOL-USDT',
             'DOT-USDT', 'LINK-USDT', 'MATIC-USDT', 'AVAX-USDT', 'UNI-USDT',
@@ -38,10 +40,19 @@ class KucoinDataFetcher:
         ]
         return popular
     
-    def get_klines(self, symbol: str, type_: str = '1day', start_time: Optional[int] = None, end_time: Optional[int] = None) -> pd.DataFrame:
+    def get_klines(self, 
+                   symbol: str, 
+                   type_: str = '1day',
+                   start_time: Optional[int] = None,
+                   end_time: Optional[int] = None) -> pd.DataFrame:
+        """Busca dados de candlestick da KuCoin"""
         try:
             url = f"{self.base_url}/api/v1/market/candles"
-            params = {'symbol': symbol, 'type': type_}
+            
+            params = {
+                'symbol': symbol,
+                'type': type_
+            }
             
             if start_time:
                 params['startAt'] = start_time
@@ -52,21 +63,30 @@ class KucoinDataFetcher:
             response.raise_for_status()
             
             data = response.json()
+            
             if data.get('code') != '200000':
                 raise Exception(f"API Error: {data}")
             
             klines = data.get('data', [])
+            
             if not klines:
                 raise Exception(f"Nenhum dado encontrado para {symbol}")
             
-            df = pd.DataFrame(klines, columns=['time', 'open', 'close', 'high', 'low', 'volume', 'turnover'])
-            df['time'] = pd.to_datetime(df['time'].astype(int), unit='s')
+            # Converter para DataFrame
+            df = pd.DataFrame(klines, columns=[
+                'time', 'open', 'close', 'high', 'low', 'volume', 'turnover'
+            ])
             
+            # Converter tipos
+            df['time'] = pd.to_datetime(df['time'].astype(int), unit='s')
             for col in ['open', 'close', 'high', 'low', 'volume', 'turnover']:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
             
+            # Reordenar por data (mais antigo primeiro)
             df = df.sort_values('time').reset_index(drop=True)
             df.set_index('time', inplace=True)
+            
+            # Remover dados inválidos
             df = df.dropna()
             
             return df
@@ -74,17 +94,29 @@ class KucoinDataFetcher:
         except Exception as e:
             raise Exception(f"Erro ao buscar dados de {symbol}: {e}")
     
-    @st.cache_data(ttl=60)
-    def get_market_data(_self, symbol: str, timeframe: str = '1day', days: int = 365) -> pd.DataFrame:
+    @st.cache_data(ttl=60)  # Cache por 1 minuto
+    def get_market_data(_self, 
+                       symbol: str, 
+                       timeframe: str = '1day',
+                       days: int = 365) -> pd.DataFrame:
+        """Busca dados de mercado formatados para o indicador"""
         try:
+            # Calcular timestamps
             end_time = int(datetime.now().timestamp())
             start_time = int((datetime.now() - timedelta(days=days)).timestamp())
             
-            df = _self.get_klines(symbol=symbol, type_=timeframe, start_time=start_time, end_time=end_time)
+            # Buscar dados
+            df = _self.get_klines(
+                symbol=symbol,
+                type_=timeframe,
+                start_time=start_time,
+                end_time=end_time
+            )
             
             if df.empty:
                 raise Exception("Nenhum dado retornado")
             
+            # Renomear colunas para compatibilidade
             df_formatted = pd.DataFrame({
                 'high': df['high'],
                 'low': df['low'],
@@ -98,205 +130,179 @@ class KucoinDataFetcher:
         except Exception as e:
             raise Exception(f"Erro em get_market_data: {e}")
 
-class DynamicVWAP:
-    """Dynamic Swing Anchored VWAP - Implementação exata do Pine Script"""
+class HullVWAPIndicator:
+    """Hull Suite + Dynamic Swing Anchored VWAP Hybrid Indicator"""
     
-    def __init__(self, swing_period: int = 50, base_apt: float = 20.0, use_adapt: bool = False, vol_bias: float = 10.0):
+    def __init__(self, 
+                 hull_source: str = 'close',
+                 hull_variation: str = 'Hma',
+                 hull_length: int = 55,
+                 length_mult: float = 1.0,
+                 swing_period: int = 50,
+                 base_apt: float = 20.0,
+                 use_adapt: bool = False,
+                 vol_bias: float = 10.0,
+                 signal_type: str = 'Hull + VWAP',
+                 show_hull_band: bool = True,
+                 show_vwap: bool = True,
+                 show_swing_labels: bool = True,
+                 show_signals: bool = True):
+        
+        self.hull_source = hull_source
+        self.hull_variation = hull_variation
+        self.hull_length = hull_length
+        self.length_mult = length_mult
         self.swing_period = swing_period
         self.base_apt = base_apt
         self.use_adapt = use_adapt
         self.vol_bias = vol_bias
-        
-        # State variables (como no Pine Script)
-        self.ph = np.nan
-        self.pl = np.nan
-        self.phL = 0
-        self.plL = 0
-        self.prev = np.nan
-        self.p = 0.0
-        self.vol = 0.0
-        self.direction = 0
-        self.vwap_points = []
-
-    def calculate(self, df: pd.DataFrame) -> dict:
-        """Calcula VWAP seguindo exatamente a lógica do Pine Script"""
-        
-        high = df['high'].values
-        low = df['low'].values
-        close = df['close'].values
-        volume = df['volume'].values
-        hlc3 = (df['high'] + df['low'] + df['close']) / 3
-        
-        n = len(df)
-        vwap_values = np.full(n, np.nan)
-        pivot_highs = np.full(n, np.nan)
-        pivot_lows = np.full(n, np.nan)
-        directions = np.full(n, 0)
-        
-        # ATR para adaptação
-        atr_len = 50
-        tr = np.maximum(high - low, np.maximum(np.abs(high - np.roll(close, 1)), np.abs(low - np.roll(close, 1))))
-        tr[0] = high[0] - low[0]  # Fix first value
-        
-        atr = pd.Series(tr).rolling(window=atr_len, min_periods=1).mean().values
-        atr_avg = pd.Series(atr).rolling(window=atr_len, min_periods=1).mean().values
-        
-        ratio = np.where(atr_avg > 0, atr / atr_avg, 1.0)
-        
-        # Calcular APT series
-        if self.use_adapt:
-            apt_raw = self.base_apt / np.power(ratio, self.vol_bias)
-            apt_series = np.clip(apt_raw, 5.0, 300.0).round()
-        else:
-            apt_series = np.full(n, self.base_apt)
-        
-        # Função alpha do Pine Script
-        def alpha_from_apt(apt):
-            apt = max(1.0, apt)
-            decay = np.exp(-np.log(2.0) / apt)
-            return 1.0 - decay
-        
-        # Loop principal (seguindo exatamente o Pine Script)
-        for i in range(n):
-            # Detectar pivots (ta.highestbars e ta.lowestbars)
-            if i >= self.swing_period:
-                # Check for pivot high
-                start_idx = max(0, i - self.swing_period)
-                end_idx = min(n, i + 1)
-                window_high = high[start_idx:end_idx]
-                if len(window_high) > 0 and high[i] == np.max(window_high):
-                    self.ph = high[i]
-                    self.phL = i
-                    pivot_highs[i] = high[i]
-                
-                # Check for pivot low
-                window_low = low[start_idx:end_idx]
-                if len(window_low) > 0 and low[i] == np.min(window_low):
-                    self.pl = low[i]
-                    self.plL = i
-                    pivot_lows[i] = low[i]
-            
-            # Direção (como no Pine Script: phL > plL ? 1 : -1)
-            current_dir = 1 if self.phL > self.plL else -1
-            directions[i] = current_dir
-            
-            # Lógica principal do Pine Script
-            if current_dir != self.direction and i > 0:  # dir != dir[1]
-                # Novo swing detectado
-                self.direction = current_dir
-                
-                # Definir x, y (ponto do swing)
-                x = self.plL if current_dir > 0 else self.phL
-                y = self.pl if current_dir > 0 else self.ph
-                
-                # Calcular txt para label
-                if current_dir > 0:  # Swing low
-                    txt = 'LL' if self.pl < self.prev else 'HL'
-                    self.prev = self.ph if i > 0 else self.ph
-                else:  # Swing high
-                    txt = 'LH' if self.ph < self.prev else 'HH'
-                    self.prev = self.pl if i > 0 else self.pl
-                
-                # Reset VWAP (como no Pine Script)
-                barsback = i - x
-                if barsback < len(volume) and x < len(volume):
-                    self.p = y * volume[max(0, min(x, len(volume)-1))]
-                    self.vol = volume[max(0, min(x, len(volume)-1))]
-                
-                # Recalcular VWAP desde o swing
-                for j in range(max(0, x), i + 1):
-                    if j >= n:
-                        break
-                    
-                    apt_j = apt_series[j]
-                    alpha = alpha_from_apt(apt_j)
-                    
-                    pxv = hlc3.iloc[j] * volume[j]
-                    v_j = volume[j]
-                    
-                    self.p = (1.0 - alpha) * self.p + alpha * pxv
-                    self.vol = (1.0 - alpha) * self.vol + alpha * v_j
-                
-                vwap_values[i] = self.p / self.vol if self.vol > 0 else np.nan
-                
-            else:
-                # Continuar VWAP existente (como no Pine Script - parte else)
-                apt_0 = apt_series[i]
-                alpha = alpha_from_apt(apt_0)
-                
-                pxv = hlc3.iloc[i] * volume[i]
-                v0 = volume[i]
-                
-                self.p = (1.0 - alpha) * self.p + alpha * pxv
-                self.vol = (1.0 - alpha) * self.vol + alpha * v0
-                
-                vwap_values[i] = self.p / self.vol if self.vol > 0 else np.nan
-        
-        return {
-            'vwap': pd.Series(vwap_values, index=df.index),
-            'pivot_highs': pd.Series(pivot_highs, index=df.index),
-            'pivot_lows': pd.Series(pivot_lows, index=df.index),
-            'directions': pd.Series(directions, index=df.index),
-            'apt_series': pd.Series(apt_series, index=df.index)
-        }
-
-class HullMA:
-    """Hull Moving Average implementations"""
+        self.signal_type = signal_type
+        self.show_hull_band = show_hull_band
+        self.show_vwap = show_vwap
+        self.show_swing_labels = show_swing_labels
+        self.show_signals = show_signals
     
-    @staticmethod
-    def wma(series: pd.Series, length: int) -> pd.Series:
+    def wma(self, values: pd.Series, length: int) -> pd.Series:
         """Weighted Moving Average"""
-        def calc_wma(x):
-            if len(x) < length:
+        def calculate_wma(x):
+            if len(x) < length or x.isna().any():
                 return np.nan
             weights = np.arange(1, length + 1)
             return np.average(x.iloc[-length:], weights=weights)
-        return series.rolling(window=length, min_periods=length).apply(calc_wma, raw=False)
+        
+        return values.rolling(window=length, min_periods=length).apply(calculate_wma, raw=False)
     
-    @staticmethod
-    def ema(series: pd.Series, length: int) -> pd.Series:
+    def ema(self, values: pd.Series, length: int) -> pd.Series:
         """Exponential Moving Average"""
-        return series.ewm(span=length, adjust=False).mean()
+        return values.ewm(span=length, adjust=False).mean()
     
-    @staticmethod
-    def hma(series: pd.Series, length: int) -> pd.Series:
+    def hma(self, src: pd.Series, length: int) -> pd.Series:
         """Hull Moving Average"""
         half_length = max(1, int(length / 2))
         sqrt_length = max(1, int(np.sqrt(length)))
         
-        wma_half = HullMA.wma(series, half_length)
-        wma_full = HullMA.wma(series, length)
+        wma_half = self.wma(src, half_length)
+        wma_full = self.wma(src, length)
         raw_hma = 2 * wma_half - wma_full
         
-        return HullMA.wma(raw_hma, sqrt_length)
+        return self.wma(raw_hma, sqrt_length)
     
-    @staticmethod
-    def ehma(series: pd.Series, length: int) -> pd.Series:
+    def ehma(self, src: pd.Series, length: int) -> pd.Series:
         """Exponential Hull Moving Average"""
         half_length = max(1, int(length / 2))
         sqrt_length = max(1, int(np.sqrt(length)))
         
-        ema_half = HullMA.ema(series, half_length)
-        ema_full = HullMA.ema(series, length)
+        ema_half = self.ema(src, half_length)
+        ema_full = self.ema(src, length)
         raw_ehma = 2 * ema_half - ema_full
         
-        return HullMA.ema(raw_ehma, sqrt_length)
+        return self.ema(raw_ehma, sqrt_length)
     
-    @staticmethod
-    def thma(series: pd.Series, length: int) -> pd.Series:
+    def thma(self, src: pd.Series, length: int) -> pd.Series:
         """Triangular Hull Moving Average"""
         third_length = max(1, int(length / 3))
         half_length = max(1, int(length / 2))
         
-        wma_third = HullMA.wma(series, third_length)
-        wma_half = HullMA.wma(series, half_length)
-        wma_full = HullMA.wma(series, length)
+        wma_third = self.wma(src, third_length)
+        wma_half = self.wma(src, half_length)
+        wma_full = self.wma(src, length)
         
         raw_thma = wma_third * 3 - wma_half - wma_full
-        return HullMA.wma(raw_thma, length)
+        return self.wma(raw_thma, length)
+    
+    def calculate_hull(self, src: pd.Series) -> pd.Series:
+        """Calculate Hull MA based on selected variation"""
+        adjusted_length = max(1, int(self.hull_length * self.length_mult))
+        
+        if self.hull_variation == 'Hma':
+            return self.hma(src, adjusted_length)
+        elif self.hull_variation == 'Ehma':
+            return self.ehma(src, adjusted_length)
+        elif self.hull_variation == 'Thma':
+            return self.thma(src, max(1, int(adjusted_length / 2)))
+        else:
+            raise ValueError(f"Invalid hull_variation: {self.hull_variation}")
+    
+    def detect_swings(self, high: pd.Series, low: pd.Series) -> pd.Series:
+        """Detect swing points (simplified for real-time performance)"""
+        swing_points = pd.Series(index=high.index, dtype=float)
+        
+        for i in range(self.swing_period, len(high) - self.swing_period):
+            # Check for swing high
+            window_high = high.iloc[i-self.swing_period:i+self.swing_period+1]
+            if high.iloc[i] == window_high.max():
+                swing_points.iloc[i] = high.iloc[i]
+            
+            # Check for swing low  
+            window_low = low.iloc[i-self.swing_period:i+self.swing_period+1]
+            if low.iloc[i] == window_low.min():
+                swing_points.iloc[i] = low.iloc[i]
+        
+        return swing_points
+    
+    def calculate_vwap(self, df: pd.DataFrame) -> pd.Series:
+        """Calculate simplified VWAP"""
+        # Simplified VWAP calculation for better performance
+        typical_price = (df['high'] + df['low'] + df['close']) / 3
+        vwap = (typical_price * df['volume']).cumsum() / df['volume'].cumsum()
+        return vwap
+    
+    def generate_signals(self, df: pd.DataFrame, hull_ma: pd.Series, vwap: pd.Series) -> tuple:
+        """Generate buy/sell signals"""
+        buy_signals = pd.Series([False] * len(df), index=df.index)
+        sell_signals = pd.Series([False] * len(df), index=df.index)
+        
+        # Hull crossover conditions
+        hull_cross_up = (df['close'] > hull_ma) & (df['close'].shift(1) <= hull_ma.shift(1))
+        hull_cross_down = (df['close'] < hull_ma) & (df['close'].shift(1) >= hull_ma.shift(1))
+        
+        # VWAP conditions
+        price_above_vwap = df['close'] > vwap
+        price_below_vwap = df['close'] < vwap
+        
+        if self.signal_type == 'Hull Only':
+            buy_signals = hull_cross_up
+            sell_signals = hull_cross_down
+        elif self.signal_type == 'VWAP Only':
+            vwap_cross_up = (df['close'] > vwap) & (df['close'].shift(1) <= vwap.shift(1))
+            vwap_cross_down = (df['close'] < vwap) & (df['close'].shift(1) >= vwap.shift(1))
+            buy_signals = vwap_cross_up
+            sell_signals = vwap_cross_down
+        elif self.signal_type == 'Hull + VWAP':
+            buy_signals = hull_cross_up & price_above_vwap
+            sell_signals = hull_cross_down & price_below_vwap
+        
+        return buy_signals, sell_signals
+    
+    def calculate(self, df: pd.DataFrame) -> dict:
+        """Main calculation method"""
+        # Calculate Hull MA
+        src = df[self.hull_source] if self.hull_source in df.columns else df['close']
+        hull_main = self.calculate_hull(src)
+        hull_band = hull_main.shift(2) if self.show_hull_band else pd.Series([np.nan] * len(df), index=df.index)
+        
+        # Calculate VWAP
+        vwap = self.calculate_vwap(df) if self.show_vwap else pd.Series([np.nan] * len(df), index=df.index)
+        
+        # Detect swing points
+        swing_points = self.detect_swings(df['high'], df['low']) if self.show_swing_labels else pd.Series([np.nan] * len(df), index=df.index)
+        
+        # Generate trading signals
+        buy_signals, sell_signals = self.generate_signals(df, hull_main, vwap) if self.show_signals else (pd.Series([False] * len(df), index=df.index), pd.Series([False] * len(df), index=df.index))
+        
+        return {
+            'hull_main': hull_main,
+            'hull_band': hull_band,
+            'vwap': vwap,
+            'swing_points': swing_points,
+            'buy_signals': buy_signals,
+            'sell_signals': sell_signals,
+            'hull_trend': hull_main > hull_main.shift(1)
+        }
 
-def create_plotly_chart(df: pd.DataFrame, hull_ma: pd.Series, vwap_results: dict, symbol: str) -> go.Figure:
+def create_plotly_chart(df: pd.DataFrame, results: dict, symbol: str) -> go.Figure:
     """Create interactive Plotly chart"""
+    # Create subplots
     fig = make_subplots(
         rows=2, cols=1,
         shared_xaxes=True,
@@ -305,7 +311,7 @@ def create_plotly_chart(df: pd.DataFrame, hull_ma: pd.Series, vwap_results: dict
         subplot_titles=[f'{symbol} - Hull VWAP Analysis', 'Volume']
     )
     
-    # Candlestick
+    # Candlestick chart
     fig.add_trace(
         go.Candlestick(
             x=df.index,
@@ -321,97 +327,130 @@ def create_plotly_chart(df: pd.DataFrame, hull_ma: pd.Series, vwap_results: dict
     )
     
     # Hull MA
-    if not hull_ma.isna().all():
-        hull_trend = hull_ma > hull_ma.shift(1)
-        hull_color = '#00ff00' if hull_trend.iloc[-1] else '#ff0000'
+    hull_color = '#00ff00' if results['hull_trend'].iloc[-1] else '#ff0000'
+    fig.add_trace(
+        go.Scatter(
+            x=df.index,
+            y=results['hull_main'],
+            mode='lines',
+            name='Hull MA',
+            line=dict(color=hull_color, width=2)
+        ),
+        row=1, col=1
+    )
+    
+    # Hull Band
+    if not results['hull_band'].isna().all():
         fig.add_trace(
             go.Scatter(
                 x=df.index,
-                y=hull_ma,
+                y=results['hull_band'],
                 mode='lines',
-                name='Hull MA',
-                line=dict(color=hull_color, width=2)
+                name='Hull Band',
+                line=dict(color=hull_color, width=1, dash='dash'),
+                opacity=0.6
             ),
             row=1, col=1
         )
     
     # VWAP
-    if not vwap_results['vwap'].isna().all():
-        # Colorir VWAP baseado na direção
-        directions = vwap_results['directions']
-        vwap_colors = ['#00ff88' if d > 0 else '#ff4444' for d in directions]
-        
+    if not results['vwap'].isna().all():
         fig.add_trace(
             go.Scatter(
                 x=df.index,
-                y=vwap_results['vwap'],
+                y=results['vwap'],
                 mode='lines',
-                name='Dynamic VWAP',
+                name='VWAP',
                 line=dict(color='#0088ff', width=2)
             ),
             row=1, col=1
         )
     
-    # Pivot points
-    pivot_highs = vwap_results['pivot_highs'].dropna()
-    pivot_lows = vwap_results['pivot_lows'].dropna()
-    
-    if len(pivot_highs) > 0:
+    # Buy signals
+    buy_points = results['buy_signals']
+    if buy_points.any():
+        buy_indices = buy_points[buy_points].index
         fig.add_trace(
             go.Scatter(
-                x=pivot_highs.index,
-                y=pivot_highs.values,
+                x=buy_indices,
+                y=df.loc[buy_indices, 'low'] * 0.995,
                 mode='markers',
-                name='Pivot Highs',
-                marker=dict(symbol='triangle-down', size=12, color='red')
+                name='Buy Signals',
+                marker=dict(
+                    symbol='triangle-up',
+                    size=15,
+                    color='#00ff00'
+                )
             ),
             row=1, col=1
         )
     
-    if len(pivot_lows) > 0:
+    # Sell signals
+    sell_points = results['sell_signals']
+    if sell_points.any():
+        sell_indices = sell_points[sell_points].index
         fig.add_trace(
             go.Scatter(
-                x=pivot_lows.index,
-                y=pivot_lows.values,
+                x=sell_indices,
+                y=df.loc[sell_indices, 'high'] * 1.005,
                 mode='markers',
-                name='Pivot Lows',
-                marker=dict(symbol='triangle-up', size=12, color='lime')
+                name='Sell Signals',
+                marker=dict(
+                    symbol='triangle-down',
+                    size=15,
+                    color='#ff0000'
+                )
             ),
             row=1, col=1
         )
     
-    # Volume
-    colors = ['#00ff88' if close >= open else '#ff4444' for close, open in zip(df['close'], df['open'])]
+    # Volume chart
+    colors = ['#00ff88' if close >= open else '#ff4444' 
+              for close, open in zip(df['close'], df['open'])]
+    
     fig.add_trace(
-        go.Bar(x=df.index, y=df['volume'], name='Volume', marker_color=colors, opacity=0.6),
+        go.Bar(
+            x=df.index,
+            y=df['volume'],
+            name='Volume',
+            marker_color=colors,
+            opacity=0.6
+        ),
         row=2, col=1
     )
     
+    # Update layout
     fig.update_layout(
-        title=f'{symbol} - Dynamic Swing Anchored VWAP',
+        title=f'{symbol} - Hull Suite + Dynamic VWAP Analysis',
         xaxis_rangeslider_visible=False,
         height=800,
-        template='plotly_dark'
+        template='plotly_dark',
+        showlegend=True
     )
+    
+    fig.update_xaxes(title_text="Time", row=2, col=1)
+    fig.update_yaxes(title_text="Price", row=1, col=1)
+    fig.update_yaxes(title_text="Volume", row=2, col=1)
     
     return fig
 
+# Streamlit App
 def main():
-    st.title("📈 Dynamic Swing Anchored VWAP - KuCoin")
-    st.markdown("**Implementação exata do Pine Script do Zeiierman**")
+    st.title("📈 Hull VWAP Indicator - KuCoin Data")
+    st.markdown("**Hull Suite + Dynamic Swing Anchored VWAP Hybrid Indicator**")
     
-    # Initialize fetcher
+    # Initialize data fetcher
     if 'fetcher' not in st.session_state:
         st.session_state.fetcher = KucoinDataFetcher()
     
-    # Sidebar
+    # Sidebar configuration
     with st.sidebar:
         st.header("⚙️ Configurações")
         
-        # Data settings
+        # Symbol selection
         st.subheader("📊 Dados")
-        symbols = st.session_state.fetcher.get_popular_symbols()
-        symbol = st.selectbox("Symbol", symbols, index=0)
+        popular_symbols = st.session_state.fetcher.get_popular_symbols()
+        symbol = st.selectbox("Symbol", popular_symbols, index=0)
         
         timeframes = {
             '1min': '1min', '5min': '5min', '15min': '15min', 
@@ -419,28 +458,36 @@ def main():
             '1day': '1day', '1week': '1week'
         }
         timeframe = st.selectbox("Timeframe", list(timeframes.keys()), index=6)
+        
         days = st.slider("Days Back", 7, 365, 90)
         
-        # Hull settings
-        st.subheader("🔄 Hull MA")
-        hull_type = st.selectbox("Hull Type", ['HMA', 'EHMA', 'THMA'])
+        # Hull Settings
+        st.subheader("🔄 Hull MA Settings")
+        hull_variation = st.selectbox("Hull Variation", ['Hma', 'Ehma', 'Thma'])
         hull_length = st.slider("Hull Length", 5, 200, 55)
         
-        # VWAP settings
+        # VWAP Settings
         st.subheader("📈 VWAP Settings")
         swing_period = st.slider("Swing Period", 5, 100, 50)
         base_apt = st.slider("Base APT", 5.0, 100.0, 20.0)
-        use_adapt = st.checkbox("Use ATR Adaptation", False)
         
-        if use_adapt:
-            vol_bias = st.slider("Volatility Bias", 0.1, 20.0, 10.0)
-        else:
-            vol_bias = 10.0
+        # Signal Settings
+        st.subheader("🎯 Signal Settings")
+        signal_types = ['Hull Only', 'VWAP Only', 'Hull + VWAP']
+        signal_type = st.selectbox("Signal Type", signal_types, index=2)
         
-        update_btn = st.button("🔄 Update Data", type="primary")
+        # Display Options
+        st.subheader("👁️ Display Options")
+        show_hull_band = st.checkbox("Show Hull Band", True)
+        show_vwap = st.checkbox("Show VWAP", True)
+        show_signals = st.checkbox("Show Signals", True)
+        
+        # Update button
+        update_data = st.button("🔄 Update Data", type="primary")
     
     # Main content
     try:
+        # Show loading spinner
         with st.spinner(f'Loading {symbol} data...'):
             df = st.session_state.fetcher.get_market_data(
                 symbol=symbol,
@@ -449,34 +496,30 @@ def main():
             )
         
         if df.empty:
-            st.error("No data available")
+            st.error("No data available for the selected parameters")
             return
         
-        # Calculate Hull MA
-        src = df['close']
-        if hull_type == 'HMA':
-            hull_ma = HullMA.hma(src, hull_length)
-        elif hull_type == 'EHMA':
-            hull_ma = HullMA.ehma(src, hull_length)
-        else:  # THMA
-            hull_ma = HullMA.thma(src, hull_length)
-        
-        # Calculate VWAP
-        vwap_calculator = DynamicVWAP(
+        # Create indicator
+        indicator = HullVWAPIndicator(
+            hull_variation=hull_variation,
+            hull_length=hull_length,
             swing_period=swing_period,
             base_apt=base_apt,
-            use_adapt=use_adapt,
-            vol_bias=vol_bias
+            signal_type=signal_type,
+            show_hull_band=show_hull_band,
+            show_vwap=show_vwap,
+            show_signals=show_signals
         )
         
-        with st.spinner('Calculating Dynamic VWAP...'):
-            vwap_results = vwap_calculator.calculate(df)
+        # Calculate indicators
+        with st.spinner('Calculating indicators...'):
+            results = indicator.calculate(df)
         
-        # Create chart
-        fig = create_plotly_chart(df, hull_ma, vwap_results, symbol)
+        # Create and display chart
+        fig = create_plotly_chart(df, results, symbol)
         st.plotly_chart(fig, use_container_width=True)
         
-        # Metrics
+        # Statistics
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
@@ -485,60 +528,13 @@ def main():
             st.metric("Current Price", f"${current_price:.6f}", f"{price_change:.2f}%")
         
         with col2:
-            current_vwap = vwap_results['vwap'].iloc[-1]
-            if not np.isnan(current_vwap):
-                st.metric("Current VWAP", f"${current_vwap:.6f}")
-            else:
-                st.metric("Current VWAP", "N/A")
+            buy_count = results['buy_signals'].sum()
+            st.metric("Buy Signals", buy_count)
         
         with col3:
-            pivot_highs_count = vwap_results['pivot_highs'].count()
-            pivot_lows_count = vwap_results['pivot_lows'].count()
-            st.metric("Pivot Points", f"{pivot_highs_count + pivot_lows_count}")
+            sell_count = results['sell_signals'].sum()
+            st.metric("Sell Signals", sell_count)
         
         with col4:
-            hull_trend = "🟢 Bullish" if hull_ma.iloc[-1] > hull_ma.iloc[-2] else "🔴 Bearish"
-            st.metric("Hull Trend", hull_trend)
-        
-        # Data table
-        with st.expander("📈 Raw Data"):
-            display_df = df.copy()
-            display_df['Hull_MA'] = hull_ma
-            display_df['VWAP'] = vwap_results['vwap']
-            display_df['Direction'] = vwap_results['directions']
-            st.dataframe(display_df.tail(50))
-        
-        # Footer
-        st.markdown("---")
-        st.markdown("**Dynamic Swing Anchored VWAP** - Implementação fiel ao Pine Script | Dados: KuCoin API")
-        
-    except Exception as e:
-        st.error(f"Error: {str(e)}")
-        
-        if st.button("📊 Load Sample Data"):
-            # Sample data fallback
-            dates = pd.date_range(start=datetime.now() - timedelta(days=90), end=datetime.now(), freq='1D')
-            np.random.seed(42)
-            
-            price_base = 45000
-            returns = np.random.normal(0, 0.02, len(dates))
-            price_data = price_base * np.cumprod(1 + returns)
-            
-            sample_df = pd.DataFrame({
-                'high': price_data * (1 + np.abs(np.random.normal(0, 0.01, len(dates)))),
-                'low': price_data * (1 - np.abs(np.random.normal(0, 0.01, len(dates)))),
-                'close': price_data,
-                'open': np.roll(price_data, 1),
-                'volume': np.random.lognormal(mean=15, sigma=0.5, size=len(dates))
-            }, index=dates)
-            
-            hull_ma = HullMA.hma(sample_df['close'], hull_length)
-            vwap_calc = DynamicVWAP(swing_period, base_apt, use_adapt, vol_bias)
-            vwap_results = vwap_calc.calculate(sample_df)
-            
-            fig = create_plotly_chart(sample_df, hull_ma, vwap_results, "BTC-USDT (Sample)")
-            st.plotly_chart(fig, use_container_width=True)
-            st.success("Sample data loaded successfully!")
-
-if __name__ == "__main__":
-    main()
+            trend = "🟢 Bullish" if results['hull_trend'].iloc[-1] else "🔴 Bearish"
+            st.metric("Hull Trend", trend)
