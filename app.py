@@ -3,9 +3,6 @@ import requests
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
-import time
-import json
 
 # Configuração da página
 st.set_page_config(
@@ -15,62 +12,52 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-class KuCoinAPI:
-    def __init__(self):
-        self.base_url = "https://api.kucoin.com"
+def get_kucoin_data():
+    """Obter dados das criptomoedas da KuCoin"""
+    try:
+        response = requests.get("https://api.kucoin.com/api/v1/market/allTickers", timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            return data.get('data', {}).get('ticker', [])
+        else:
+            st.error(f"Erro na API: {response.status_code}")
+            return []
+    except requests.exceptions.RequestException as e:
+        st.error(f"Erro de conexão: {str(e)}")
+        return []
+    except Exception as e:
+        st.error(f"Erro inesperado: {str(e)}")
+        return []
+
+def process_data(raw_data):
+    """Processar dados brutos da API"""
+    if not raw_data:
+        return pd.DataFrame()
     
-    def get_all_symbols(self):
-        """Obter todos os símbolos disponíveis na KuCoin"""
-        try:
-            response = requests.get(f"{self.base_url}/api/v1/symbols")
-            if response.status_code == 200:
-                return response.json()['data']
-            return []
-        except Exception as e:
-            st.error(f"Erro ao obter símbolos: {e}")
-            return []
-    
-    def get_ticker_24hr(self):
-        """Obter dados de ticker 24h para todas as moedas"""
-        try:
-            response = requests.get(f"{self.base_url}/api/v1/market/allTickers")
-            if response.status_code == 200:
-                return response.json()['data']['ticker']
-            return []
-        except Exception as e:
-            st.error(f"Erro ao obter dados de ticker: {e}")
-            return []
-    
-    def get_market_stats(self, symbol):
-        """Obter estatísticas do mercado para um símbolo específico"""
-        try:
-            response = requests.get(f"{self.base_url}/api/v1/market/stats?symbol={symbol}")
-            if response.status_code == 200:
-                return response.json()['data']
-            return None
-        except Exception as e:
-            st.error(f"Erro ao obter estatísticas do mercado: {e}")
-            return None
-    
-    def get_klines(self, symbol, type_="1hour", start_at=None, end_at=None):
-        """Obter dados de candlestick (klines)"""
-        try:
-            params = {
-                'symbol': symbol,
-                'type': type_
-            }
-            if start_at:
-                params['startAt'] = start_at
-            if end_at:
-                params['endAt'] = end_at
-                
-            response = requests.get(f"{self.base_url}/api/v1/market/candles", params=params)
-            if response.status_code == 200:
-                return response.json()['data']
-            return []
-        except Exception as e:
-            st.error(f"Erro ao obter dados de klines: {e}")
-            return []
+    try:
+        df = pd.DataFrame(raw_data)
+        
+        # Filtrar apenas pares USDT para simplicidade
+        df = df[df['symbol'].str.contains('-USDT$', regex=True, na=False)]
+        
+        # Converter colunas numéricas essenciais
+        numeric_cols = ['last', 'changeRate', 'volValue', 'vol']
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+        # Filtrar dados válidos
+        df = df.dropna(subset=['last', 'changeRate', 'volValue'])
+        df = df[df['volValue'] > 0]  # Volume deve ser positivo
+        
+        # Ordenar por volume
+        df = df.sort_values('volValue', ascending=False)
+        
+        return df
+        
+    except Exception as e:
+        st.error(f"Erro ao processar dados: {str(e)}")
+        return pd.DataFrame()
 
 def format_currency(value):
     """Formatar valores monetários"""
@@ -84,88 +71,77 @@ def format_currency(value):
             return f"${val/1e3:.2f}K"
         else:
             return f"${val:.2f}"
-    except:
+    except (ValueError, TypeError):
         return "N/A"
 
 def format_percentage(value):
     """Formatar percentuais"""
     try:
-        val = float(value) * 100
-        return f"{val:+.2f}%"
-    except:
+        return f"{float(value)*100:+.2f}%"
+    except (ValueError, TypeError):
         return "N/A"
 
-@st.cache_data(ttl=60)  # Cache por 1 minuto
+@st.cache_data(ttl=300)  # Cache por 5 minutos
 def load_crypto_data():
-    """Carregar dados das criptomoedas"""
-    api = KuCoinAPI()
-    ticker_data = api.get_ticker_24hr()
-    
-    if not ticker_data:
-        return pd.DataFrame()
-    
-    # Converter para DataFrame
-    df = pd.DataFrame(ticker_data)
-    
-    # Filtrar apenas pares USD, USDT, BTC principais
-    df = df[df['symbol'].str.contains('-USDT|=BTC|-USD', regex=True)]
-    
-    # Converter colunas numéricas
-    numeric_columns = ['last', 'changePrice', 'changeRate', 'high', 'low', 'vol', 'volValue']
-    for col in numeric_columns:
-        df[col] = pd.to_numeric(df[col], errors='coerce')
-    
-    # Adicionar colunas calculadas
-    df['market_cap'] = df['last'] * df['vol']
-    df['price_formatted'] = df['last'].apply(lambda x: f"${x:.4f}" if x < 1 else f"${x:.2f}")
-    df['change_formatted'] = df['changeRate'].apply(format_percentage)
-    df['volume_formatted'] = df['volValue'].apply(format_currency)
-    
-    return df.sort_values('volValue', ascending=False)
+    """Carregar e processar dados com cache"""
+    raw_data = get_kucoin_data()
+    return process_data(raw_data)
 
-def create_price_chart(symbol_data, symbol):
-    """Criar gráfico de preços"""
-    api = KuCoinAPI()
-    
-    # Obter dados das últimas 24 horas
-    end_time = int(time.time())
-    start_time = end_time - (24 * 60 * 60)  # 24 horas atrás
-    
-    klines = api.get_klines(symbol, type_="1hour", start_at=start_time, end_at=end_time)
-    
-    if not klines:
-        st.warning("Não foi possível obter dados históricos")
+def create_volume_chart(df):
+    """Criar gráfico de volume"""
+    try:
+        top_20 = df.head(20)
+        fig = px.bar(
+            top_20,
+            x='symbol',
+            y='volValue',
+            title="Top 20 - Volume de Negociação (24h)",
+            color='changeRate',
+            color_continuous_scale='RdYlGn',
+            labels={'volValue': 'Volume (USD)', 'symbol': 'Símbolo'}
+        )
+        fig.update_layout(
+            xaxis_tickangle=-45,
+            height=500,
+            showlegend=False
+        )
+        return fig
+    except Exception as e:
+        st.error(f"Erro ao criar gráfico: {str(e)}")
         return None
-    
-    # Converter klines para DataFrame
-    df_klines = pd.DataFrame(klines, columns=['timestamp', 'open', 'close', 'high', 'low', 'volume', 'turnover'])
-    
-    # Converter timestamp para datetime
-    df_klines['datetime'] = pd.to_datetime(df_klines['timestamp'], unit='s')
-    
-    # Converter para float
-    for col in ['open', 'close', 'high', 'low', 'volume']:
-        df_klines[col] = pd.to_numeric(df_klines[col], errors='coerce')
-    
-    # Criar gráfico de candlestick
-    fig = go.Figure(data=go.Candlestick(
-        x=df_klines['datetime'],
-        open=df_klines['open'],
-        high=df_klines['high'],
-        low=df_klines['low'],
-        close=df_klines['close'],
-        name=symbol
-    ))
-    
-    fig.update_layout(
-        title=f"Preço de {symbol} - Últimas 24 horas",
-        xaxis_title="Tempo",
-        yaxis_title="Preço (USD)",
-        template="plotly_white",
-        height=400
-    )
-    
-    return fig
+
+def create_distribution_chart(df):
+    """Criar gráfico de distribuição de mudanças"""
+    try:
+        # Categorizar mudanças
+        conditions = [
+            df['changeRate'] < -0.1,
+            (df['changeRate'] >= -0.1) & (df['changeRate'] < -0.05),
+            (df['changeRate'] >= -0.05) & (df['changeRate'] < 0),
+            (df['changeRate'] >= 0) & (df['changeRate'] < 0.05),
+            (df['changeRate'] >= 0.05) & (df['changeRate'] < 0.1),
+            df['changeRate'] >= 0.1
+        ]
+        
+        choices = ['< -10%', '-10% a -5%', '-5% a 0%', '0% a 5%', '5% a 10%', '> 10%']
+        df['change_category'] = pd.Series(dtype='object')
+        
+        for i, condition in enumerate(conditions):
+            df.loc[condition, 'change_category'] = choices[i]
+        
+        # Contar categorias
+        counts = df['change_category'].value_counts()
+        
+        fig = px.pie(
+            values=counts.values,
+            names=counts.index,
+            title="Distribuição de Mudanças de Preço (24h)",
+            color_discrete_sequence=px.colors.qualitative.Set3
+        )
+        return fig
+    except Exception as e:
+        st.error(f"Erro ao criar gráfico de distribuição: {str(e)}")
+        return None
 
 def main():
     st.title("🚀 KuCoin Cryptocurrency Dashboard")
@@ -174,187 +150,155 @@ def main():
     # Sidebar
     st.sidebar.title("⚙️ Configurações")
     
+    # Filtro de volume mínimo
+    min_volume = st.sidebar.selectbox(
+        "Volume mínimo",
+        [0, 50000, 100000, 500000, 1000000],
+        index=2,
+        format_func=lambda x: f"${x:,}"
+    )
+    
     # Carregar dados
-    with st.spinner("Carregando dados das criptomoedas..."):
+    with st.spinner("🔄 Carregando dados..."):
         df = load_crypto_data()
     
     if df.empty:
-        st.error("Não foi possível carregar os dados. Tente novamente mais tarde.")
-        return
+        st.error("❌ Não foi possível carregar os dados. Verifique sua conexão e tente novamente.")
+        st.stop()
     
-    # Filtros na sidebar
-    st.sidebar.subheader("🔍 Filtros")
-    
-    # Filtro por volume mínimo
-    min_volume = st.sidebar.number_input(
-        "Volume mínimo (USD)", 
-        min_value=0, 
-        value=100000, 
-        step=50000,
-        format="%d"
-    )
-    
-    # Filtro por mudança de preço
-    price_change = st.sidebar.selectbox(
-        "Filtrar por mudança de preço",
-        ["Todos", "Apenas ganhos", "Apenas perdas", "Ganhos > 5%", "Perdas > 5%"]
-    )
-    
-    # Aplicar filtros
+    # Aplicar filtro de volume
     df_filtered = df[df['volValue'] >= min_volume]
     
-    if price_change == "Apenas ganhos":
-        df_filtered = df_filtered[df_filtered['changeRate'] > 0]
-    elif price_change == "Apenas perdas":
-        df_filtered = df_filtered[df_filtered['changeRate'] < 0]
-    elif price_change == "Ganhos > 5%":
-        df_filtered = df_filtered[df_filtered['changeRate'] > 0.05]
-    elif price_change == "Perdas > 5%":
-        df_filtered = df_filtered[df_filtered['changeRate'] < -0.05]
+    if df_filtered.empty:
+        st.warning(f"⚠️ Nenhuma moeda encontrada com volume superior a {format_currency(min_volume)}")
+        st.stop()
     
     # Métricas principais
+    st.subheader("📊 Resumo do Mercado")
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        total_coins = len(df_filtered)
-        st.metric("Total de Moedas", total_coins)
+        st.metric("Total de Moedas", len(df_filtered))
     
     with col2:
         gainers = len(df_filtered[df_filtered['changeRate'] > 0])
-        st.metric("Em Alta", gainers, delta=f"{gainers/total_coins*100:.1f}%")
+        st.metric("Em Alta", gainers, delta=f"{gainers/len(df_filtered)*100:.1f}%")
     
     with col3:
         losers = len(df_filtered[df_filtered['changeRate'] < 0])
-        st.metric("Em Baixa", losers, delta=f"-{losers/total_coins*100:.1f}%")
+        st.metric("Em Baixa", losers, delta=f"-{losers/len(df_filtered)*100:.1f}%")
     
     with col4:
         total_volume = df_filtered['volValue'].sum()
         st.metric("Volume Total", format_currency(total_volume))
     
-    # Abas principais
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 Visão Geral", "🏆 Top Moedas", "📈 Análise", "🔍 Busca Detalhada"])
+    # Tabs principais
+    tab1, tab2, tab3 = st.tabs(["🏆 Top Moedas", "📈 Maiores Variações", "📊 Análise"])
     
     with tab1:
-        st.subheader("Maiores Variações (24h)")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.write("🚀 **Maiores Altas**")
-            top_gainers = df_filtered.nlargest(10, 'changeRate')[['symbol', 'price_formatted', 'change_formatted', 'volume_formatted']]
-            st.dataframe(top_gainers, use_container_width=True, hide_index=True)
-        
-        with col2:
-            st.write("📉 **Maiores Baixas**")
-            top_losers = df_filtered.nsmallest(10, 'changeRate')[['symbol', 'price_formatted', 'change_formatted', 'volume_formatted']]
-            st.dataframe(top_losers, use_container_width=True, hide_index=True)
-    
-    with tab2:
         st.subheader("Top 20 Criptomoedas por Volume")
         
-        top_20 = df_filtered.head(20)
-        
-        # Gráfico de barras do volume
-        fig_volume = px.bar(
-            top_20, 
-            x='symbol', 
-            y='volValue',
-            title="Volume de Negociação (24h)",
-            labels={'volValue': 'Volume (USD)', 'symbol': 'Símbolo'}
-        )
-        fig_volume.update_layout(xaxis_tickangle=-45)
-        st.plotly_chart(fig_volume, use_container_width=True)
+        # Gráfico de volume
+        fig_volume = create_volume_chart(df_filtered)
+        if fig_volume:
+            st.plotly_chart(fig_volume, use_container_width=True)
         
         # Tabela detalhada
-        display_columns = ['symbol', 'price_formatted', 'change_formatted', 'volume_formatted', 'high', 'low']
-        st.dataframe(
-            top_20[display_columns].rename(columns={
-                'symbol': 'Símbolo',
-                'price_formatted': 'Preço',
-                'change_formatted': 'Mudança 24h',
-                'volume_formatted': 'Volume',
-                'high': 'Alta 24h',
-                'low': 'Baixa 24h'
-            }),
-            use_container_width=True,
-            hide_index=True
-        )
+        top_20 = df_filtered.head(20).copy()
+        top_20['Preço'] = top_20['last'].apply(lambda x: f"${x:.4f}")
+        top_20['Mudança 24h'] = top_20['changeRate'].apply(format_percentage)
+        top_20['Volume'] = top_20['volValue'].apply(format_currency)
+        
+        display_df = top_20[['symbol', 'Preço', 'Mudança 24h', 'Volume']]
+        display_df.columns = ['Símbolo', 'Preço', 'Mudança 24h', 'Volume']
+        
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
     
-    with tab3:
-        st.subheader("Análise de Distribuição")
+    with tab2:
+        st.subheader("Maiores Variações nas Últimas 24h")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            # Gráfico de pizza - distribuição de mudanças
-            change_dist = pd.cut(df_filtered['changeRate'], 
-                               bins=[-float('inf'), -0.1, -0.05, 0, 0.05, 0.1, float('inf')],
-                               labels=['< -10%', '-10% a -5%', '-5% a 0%', '0% a 5%', '5% a 10%', '> 10%'])
+            st.markdown("### 🚀 Maiores Altas")
+            top_gainers = df_filtered.nlargest(10, 'changeRate').copy()
+            top_gainers['Preço'] = top_gainers['last'].apply(lambda x: f"${x:.4f}")
+            top_gainers['Mudança'] = top_gainers['changeRate'].apply(format_percentage)
             
-            fig_pie = px.pie(
-                values=change_dist.value_counts().values,
-                names=change_dist.value_counts().index,
-                title="Distribuição de Mudanças de Preço (24h)"
-            )
-            st.plotly_chart(fig_pie, use_container_width=True)
+            gainers_display = top_gainers[['symbol', 'Preço', 'Mudança']]
+            gainers_display.columns = ['Símbolo', 'Preço', 'Mudança']
+            st.dataframe(gainers_display, use_container_width=True, hide_index=True)
         
         with col2:
-            # Histograma de mudanças de preço
-            fig_hist = px.histogram(
-                df_filtered,
-                x='changeRate',
-                bins=30,
-                title="Histograma de Mudanças de Preço (24h)",
-                labels={'changeRate': 'Mudança (%)', 'count': 'Frequência'}
-            )
-            st.plotly_chart(fig_hist, use_container_width=True)
+            st.markdown("### 📉 Maiores Baixas")
+            top_losers = df_filtered.nsmallest(10, 'changeRate').copy()
+            top_losers['Preço'] = top_losers['last'].apply(lambda x: f"${x:.4f}")
+            top_losers['Mudança'] = top_losers['changeRate'].apply(format_percentage)
+            
+            losers_display = top_losers[['symbol', 'Preço', 'Mudança']]
+            losers_display.columns = ['Símbolo', 'Preço', 'Mudança']
+            st.dataframe(losers_display, use_container_width=True, hide_index=True)
     
-    with tab4:
-        st.subheader("Busca Detalhada")
+    with tab3:
+        st.subheader("Análise de Distribuição do Mercado")
         
-        # Seleção de moeda
-        symbols = df_filtered['symbol'].tolist()
-        selected_symbol = st.selectbox("Selecione uma criptomoeda:", symbols)
+        col1, col2 = st.columns(2)
         
-        if selected_symbol:
-            symbol_data = df_filtered[df_filtered['symbol'] == selected_symbol].iloc[0]
+        with col1:
+            # Gráfico de distribuição
+            fig_dist = create_distribution_chart(df_filtered)
+            if fig_dist:
+                st.plotly_chart(fig_dist, use_container_width=True)
+        
+        with col2:
+            # Estatísticas
+            st.markdown("### 📊 Estatísticas")
             
-            # Informações detalhadas
-            col1, col2, col3 = st.columns(3)
+            avg_change = df_filtered['changeRate'].mean()
+            median_change = df_filtered['changeRate'].median()
+            std_change = df_filtered['changeRate'].std()
             
-            with col1:
-                st.metric("Preço Atual", symbol_data['price_formatted'])
-                st.metric("Alta 24h", f"${symbol_data['high']:.4f}")
+            st.metric("Mudança Média", format_percentage(avg_change))
+            st.metric("Mudança Mediana", format_percentage(median_change))
+            st.metric("Desvio Padrão", format_percentage(std_change))
             
-            with col2:
-                st.metric("Mudança 24h", symbol_data['change_formatted'], 
-                         delta=symbol_data['change_formatted'])
-                st.metric("Baixa 24h", f"${symbol_data['low']:.4f}")
+            # Volume por faixa de mudança
+            st.markdown("### 💰 Volume por Performance")
+            volume_up = df_filtered[df_filtered['changeRate'] > 0]['volValue'].sum()
+            volume_down = df_filtered[df_filtered['changeRate'] < 0]['volValue'].sum()
             
-            with col3:
-                st.metric("Volume", symbol_data['volume_formatted'])
-                st.metric("Volume Base", f"{symbol_data['vol']:.0f}")
-            
-            # Gráfico de preços
-            fig_price = create_price_chart(symbol_data, selected_symbol)
-            if fig_price:
-                st.plotly_chart(fig_price, use_container_width=True)
+            st.metric("Volume - Moedas em Alta", format_currency(volume_up))
+            st.metric("Volume - Moedas em Baixa", format_currency(volume_down))
+    
+    # Busca específica
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🔍 Busca Específica")
+    search_term = st.sidebar.text_input("Digite o símbolo (ex: BTC-USDT)")
+    
+    if search_term:
+        search_result = df_filtered[df_filtered['symbol'].str.contains(search_term.upper(), na=False)]
+        if not search_result.empty:
+            st.sidebar.success(f"✅ Encontrado: {search_term.upper()}")
+            coin_data = search_result.iloc[0]
+            st.sidebar.metric("Preço", f"${coin_data['last']:.4f}")
+            st.sidebar.metric("Mudança 24h", format_percentage(coin_data['changeRate']))
+            st.sidebar.metric("Volume", format_currency(coin_data['volValue']))
+        else:
+            st.sidebar.warning(f"❌ {search_term} não encontrado")
     
     # Rodapé
     st.markdown("---")
     st.markdown(
         """
-        **📊 KuCoin Crypto Dashboard**  
-        Dados fornecidos pela API pública da KuCoin. Atualização automática a cada minuto.  
-        ⚠️ *Este dashboard é apenas para fins informativos. Não constitui aconselhamento financeiro.*
+        **📊 KuCoin Crypto Dashboard** | Dados em tempo real da API pública da KuCoin  
+        ⚠️ *Apenas para fins informativos - não é aconselhamento financeiro*  
+        🔄 *Dados atualizados a cada 5 minutos*
         """
     )
     
-    # Auto-refresh
-    st.sidebar.markdown("---")
-    auto_refresh = st.sidebar.checkbox("🔄 Auto-refresh (30s)")
-    if auto_refresh:
-        time.sleep(30)
+    # Botão de atualização manual
+    if st.button("🔄 Atualizar Dados Agora", type="primary"):
+        st.cache_data.clear()
         st.rerun()
 
 if __name__ == "__main__":
