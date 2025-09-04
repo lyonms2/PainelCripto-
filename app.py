@@ -520,7 +520,7 @@ def main():
         
         # Opção de restart
         if st.button("🔄 Reiniciar Aplicação", type="primary"):
-            CacheManager.clear_all_cache()
+            st.cache_data.clear()
             st.rerun()
 
 
