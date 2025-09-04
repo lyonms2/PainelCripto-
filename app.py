@@ -538,3 +538,166 @@ def main():
         with col4:
             trend = "🟢 Bullish" if results['hull_trend'].iloc[-1] else "🔴 Bearish"
             st.metric("Hull Trend", trend)
+        
+        # Recent signals table
+        st.subheader("📋 Recent Signals")
+        
+        # Get recent signals
+        recent_signals = []
+        buy_signals = results['buy_signals']
+        sell_signals = results['sell_signals']
+        
+        for i in range(len(df)):
+            if buy_signals.iloc[i]:
+                recent_signals.append({
+                    'Time': df.index[i].strftime('%Y-%m-%d %H:%M'),
+                    'Signal': '🟢 BUY',
+                    'Price': f"${df['close'].iloc[i]:.6f}",
+                    'Volume': f"{df['volume'].iloc[i]:,.0f}"
+                })
+            elif sell_signals.iloc[i]:
+                recent_signals.append({
+                    'Time': df.index[i].strftime('%Y-%m-%d %H:%M'),
+                    'Signal': '🔴 SELL', 
+                    'Price': f"${df['close'].iloc[i]:.6f}",
+                    'Volume': f"{df['volume'].iloc[i]:,.0f}"
+                })
+        
+        # Show last 10 signals
+        if recent_signals:
+            recent_df = pd.DataFrame(recent_signals[-10:])
+            st.dataframe(recent_df, use_container_width=True)
+        else:
+            st.info("No recent signals found with current parameters")
+        
+        # Performance metrics
+        st.subheader("📊 Performance Metrics")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**Hull MA Analysis**")
+            hull_values = results['hull_main'].dropna()
+            if len(hull_values) > 1:
+                hull_change = ((hull_values.iloc[-1] - hull_values.iloc[0]) / hull_values.iloc[0]) * 100
+                st.write(f"Hull MA Change: {hull_change:.2f}%")
+                st.write(f"Current Hull: ${hull_values.iloc[-1]:.6f}")
+                
+        with col2:
+            st.write("**VWAP Analysis**")
+            vwap_values = results['vwap'].dropna()
+            if len(vwap_values) > 1:
+                price_vs_vwap = ((current_price - vwap_values.iloc[-1]) / vwap_values.iloc[-1]) * 100
+                st.write(f"Price vs VWAP: {price_vs_vwap:.2f}%")
+                st.write(f"Current VWAP: ${vwap_values.iloc[-1]:.6f}")
+        
+        # Data table
+        with st.expander("📈 Raw Data"):
+            display_df = df.copy()
+            display_df['Hull_MA'] = results['hull_main']
+            display_df['VWAP'] = results['vwap']
+            display_df['Buy_Signal'] = results['buy_signals']
+            display_df['Sell_Signal'] = results['sell_signals']
+            
+            st.dataframe(display_df.tail(50), use_container_width=True)
+        
+        # Export data
+        st.subheader("💾 Export Data")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("📥 Download CSV"):
+                export_df = df.copy()
+                export_df['Hull_MA'] = results['hull_main']
+                export_df['VWAP'] = results['vwap']
+                export_df['Buy_Signal'] = results['buy_signals']
+                export_df['Sell_Signal'] = results['sell_signals']
+                
+                csv = export_df.to_csv()
+                st.download_button(
+                    label="Download data as CSV",
+                    data=csv,
+                    file_name=f"{symbol}_{timeframe}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv"
+                )
+        
+        with col2:
+            if st.button("📊 Download Chart HTML"):
+                fig_html = fig.to_html()
+                st.download_button(
+                    label="Download chart as HTML", 
+                    data=fig_html,
+                    file_name=f"{symbol}_chart_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
+                    mime="text/html"
+                )
+        
+        # Footer info
+        st.markdown("---")
+        st.markdown(
+            """
+            <div style='text-align: center'>
+                <p><strong>Hull VWAP Indicator</strong> - Real-time crypto analysis with KuCoin data</p>
+                <p><em>Data provided by KuCoin API | Not financial advice</em></p>
+            </div>
+            """, 
+            unsafe_allow_html=True
+        )
+        
+    except Exception as e:
+        st.error(f"Error loading data: {str(e)}")
+        
+        # Show troubleshooting tips
+        st.subheader("🔧 Troubleshooting")
+        st.write("""
+        **Common issues:**
+        1. **Network Error**: Check your internet connection
+        2. **Invalid Symbol**: Make sure the trading pair exists on KuCoin
+        3. **No Data**: Try a different timeframe or reduce the number of days
+        4. **API Limits**: Wait a few seconds and try again
+        
+        **Tips:**
+        - Use popular symbols like BTC-USDT, ETH-USDT
+        - Start with daily timeframe for better stability
+        - Reduce days if getting timeout errors
+        """)
+        
+        # Show sample data as fallback
+        if st.button("📊 Load Sample Data"):
+            st.info("Loading with simulated data for demonstration...")
+            
+            # Create sample data
+            dates = pd.date_range(start=datetime.now() - timedelta(days=90), end=datetime.now(), freq='1D')
+            np.random.seed(42)
+            
+            price_base = 45000  # Sample BTC price
+            returns = np.random.normal(0, 0.02, len(dates))
+            price_data = price_base * np.cumprod(1 + returns)
+            
+            sample_df = pd.DataFrame({
+                'high': price_data * (1 + np.abs(np.random.normal(0, 0.01, len(dates)))),
+                'low': price_data * (1 - np.abs(np.random.normal(0, 0.01, len(dates)))),
+                'close': price_data,
+                'open': np.roll(price_data, 1),
+                'volume': np.random.lognormal(mean=15, sigma=0.5, size=len(dates))
+            }, index=dates)
+            
+            # Calculate with sample data
+            indicator = HullVWAPIndicator(
+                hull_variation=hull_variation,
+                hull_length=hull_length,
+                swing_period=swing_period,
+                base_apt=base_apt,
+                signal_type=signal_type,
+                show_hull_band=show_hull_band,
+                show_vwap=show_vwap,
+                show_signals=show_signals
+            )
+            
+            results = indicator.calculate(sample_df)
+            fig = create_plotly_chart(sample_df, results, "BTC-USDT (Sample)")
+            st.plotly_chart(fig, use_container_width=True)
+            
+            st.success("Sample data loaded successfully! This demonstrates how the indicator works.")
+
+if __name__ == "__main__":
+    main()
