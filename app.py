@@ -505,6 +505,8 @@ def main():
             hull_length=hull_length,
             swing_period=swing_period,
             base_apt=base_apt,
+            use_adapt=use_adapt,
+            vol_bias=vol_bias,
             signal_type=signal_type,
             show_hull_band=show_hull_band,
             show_vwap=show_vwap,
