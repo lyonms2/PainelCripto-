@@ -5,4 +5,4 @@ SYMBOLS = [
 ]
 
 # Timeframe padrão para análise
-TIMEFRAME = '1h'
+TIMEFRAME = '1d'
