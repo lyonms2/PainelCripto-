@@ -1,6 +1,7 @@
 import ccxt
 import pandas as pd
 import numpy as np
+from strategies import strategy_ema_hull_cross
 
 def get_ema(prices, period=55):
     return prices.ewm(span=period).mean()
