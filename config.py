@@ -1,4 +1,3 @@
-# Lista estática dos 100 principais pares USDT negociados na KuCoin
 SYMBOLS = [
     'BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'ADA/USDT', 'XRP/USDT', 'DOGE/USDT', 'TRX/USDT', 'LINK/USDT', 
     'LTC/USDT', 'DOT/USDT', 'BCH/USDT', 'SHIB/USDT', 'AVAX/USDT', 'OP/USDT', 'UNI/USDT', 'ATOM/USDT', 'ETC/USDT', 'XLM/USDT',
@@ -11,6 +10,4 @@ SYMBOLS = [
     'BAND/USDT', 'BICO/USDT', 'LPT/USDT', 'SCRT/USDT', 'NKN/USDT', 'OGN/USDT', 'STORJ/USDT',
     'SUN/USDT', 'SXP/USDT', 'XNO/USDT', 'YGG/USDT', 'ZRX/USDT', 'RUNE/USDT', 'CELO/USDT'
 ]
-
-# Timeframe padrão para análise
 TIMEFRAME = '1d'
