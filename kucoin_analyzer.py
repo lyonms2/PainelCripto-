@@ -2,10 +2,10 @@ import ccxt
 import pandas as pd
 import numpy as np
 
-def get_ema(prices, period=50):
+def get_ema(prices, period=55):
     return prices.ewm(span=period).mean()
 
-def get_hull(prices, period=16):  # período típico da Hull é menor que EMA
+def get_hull(prices, period=55):
     # HMA = WMA(2*WMA(n/2) - WMA(n)), sqrt(n))
     def wma(series, period):
         weights = np.arange(1, period + 1)
@@ -24,32 +24,32 @@ def get_signal(df):
     # Usar a penúltima vela como referência (última fechada)
     close_now = df['close'].iloc[-2]
     close_prev = df['close'].iloc[-3]
-    ema_now = df['EMA50'].iloc[-2]
-    ema_prev = df['EMA50'].iloc[-3]
-    hull_now = df['HULL16'].iloc[-2]
-    hull_prev = df['HULL16'].iloc[-3]
+    ema_now = df['EMA55'].iloc[-2]
+    ema_prev = df['EMA55'].iloc[-3]
+    hull_now = df['HULL55'].iloc[-2]
+    hull_prev = df['HULL55'].iloc[-3]
 
     sinais = []
 
-    # Sinal EMA50
+    # Sinal EMA55
     if close_prev <= ema_prev and close_now > ema_now:
-        sinais.append("Compra EMA50")
+        sinais.append("Compra EMA55")
     elif close_prev >= ema_prev and close_now < ema_now:
-        sinais.append("Venda EMA50")
+        sinais.append("Venda EMA55")
     elif close_now > ema_now:
-        sinais.append("Acima EMA50")
+        sinais.append("Acima EMA55")
     elif close_now < ema_now:
-        sinais.append("Abaixo EMA50")
+        sinais.append("Abaixo EMA55")
 
-    # Sinal HULL16
+    # Sinal HULL55
     if close_prev <= hull_prev and close_now > hull_now:
-        sinais.append("Compra HULL16")
+        sinais.append("Compra HULL55")
     elif close_prev >= hull_prev and close_now < hull_now:
-        sinais.append("Venda HULL16")
+        sinais.append("Venda HULL55")
     elif close_now > hull_now:
-        sinais.append("Acima HULL16")
+        sinais.append("Acima HULL55")
     elif close_now < hull_now:
-        sinais.append("Abaixo HULL16")
+        sinais.append("Abaixo HULL55")
 
     return ", ".join(sinais) if sinais else "-"
 
@@ -60,14 +60,14 @@ def fetch_signals(symbols, timeframe):
         try:
             ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=100)
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            df['EMA50'] = get_ema(df['close'], 50)
-            df['HULL16'] = get_hull(df['close'], 16)
+            df['EMA55'] = get_ema(df['close'], 55)
+            df['HULL55'] = get_hull(df['close'], 55)
             signal = get_signal(df)
             resultados.append({
                 'Moeda': symbol,
                 'Último Preço': df['close'].iloc[-1],
-                'EMA50': df['EMA50'].iloc[-1],
-                'HULL16': df['HULL16'].iloc[-1],
+                'EMA55': df['EMA55'].iloc[-1],
+                'HULL55': df['HULL55'].iloc[-1],
                 'Sinal': signal
             })
         except Exception as e:
