@@ -17,6 +17,10 @@ for idx, symbol in enumerate(SYMBOLS, 1):
     resultados.append(result)
     progress_bar.progress(idx / total)
 
+# Limpa barra e status após finalizar
+progress_bar.empty()
+status_text.empty()
+
 # Exibe resultados finais
-st.write("Análise finalizada!")
+st.success("Análise finalizada!")
 st.dataframe(resultados)
