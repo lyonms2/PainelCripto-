@@ -5,10 +5,26 @@ def get_ema(prices, period=50):
     return prices.ewm(span=period).mean()
 
 def get_signal(df):
-    if df['close'].iloc[-1] > df['EMA50'].iloc[-1]:
+    # Precisa de pelo menos 2 candles para detectar cruzamento
+    if len(df) < 2:
+        return "-"
+    close_now = df['close'].iloc[-1]
+    close_prev = df['close'].iloc[-2]
+    ema_now = df['EMA50'].iloc[-1]
+    ema_prev = df['EMA50'].iloc[-2]
+
+    # Cruzamento para cima (Compra)
+    if close_prev <= ema_prev and close_now > ema_now:
         return "Compra"
-    elif df['close'].iloc[-1] < df['EMA50'].iloc[-1]:
+    # Cruzamento para baixo (Venda)
+    elif close_prev >= ema_prev and close_now < ema_now:
         return "Venda"
+    # Preço acima da EMA50 (sem cruzamento)
+    elif close_now > ema_now:
+        return "Preço acima da EMA50"
+    # Preço abaixo da EMA50 (sem cruzamento)
+    elif close_now < ema_now:
+        return "Preço abaixo da EMA50"
     else:
         return "-"
 
