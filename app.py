@@ -1,5 +1,5 @@
 import streamlit as st
-from kucoin_analyzer import fetch_signals
+from indicator import fetch_signals
 from config import SYMBOLS, TIMEFRAME
 
 st.title("Análise EMA50 Kucoin")
