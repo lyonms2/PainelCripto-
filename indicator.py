@@ -1,6 +1,7 @@
 import ccxt
 import pandas as pd
 import numpy as np
+from strategies import strategy_ema_hull_cross, strategy_ema_cross_hull_trend
 
 def get_ema(prices, period=55):
     return prices.ewm(span=period).mean()
@@ -22,20 +23,22 @@ def build_dataframe(ohlcv):
     df['HULL55'] = get_hull(df['close'], 55)
     return df
 
-def fetch_signals(symbols, timeframe, strategy_func):
+def fetch_signals(symbols, timeframe):
     exchange = ccxt.kucoin()
     resultados = []
     for symbol in symbols:
         try:
             ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=100)
             df = build_dataframe(ohlcv)
-            signal = strategy_func(df)
+            sinal1 = strategy_ema_hull_cross(df)
+            sinal2 = strategy_ema_cross_hull_trend(df)
             resultados.append({
                 'Moeda': symbol,
                 'Último Preço': df['close'].iloc[-1],
                 'EMA55': df['EMA55'].iloc[-1],
                 'HULL55': df['HULL55'].iloc[-1],
-                'Sinal': signal
+                'Sinal Hull/EMA': sinal1,
+                'Sinal EMA/HullTrend': sinal2
             })
         except Exception as e:
             resultados.append({'Moeda': symbol, 'Erro': str(e)})
