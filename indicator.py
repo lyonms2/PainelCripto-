@@ -30,15 +30,15 @@ def fetch_signals(symbols, timeframe):
         try:
             ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=100)
             df = build_dataframe(ohlcv)
-            sinal1 = strategy_ema_hull_cross(df)
-            sinal2 = strategy_ema_cross_hull_trend(df)
+            hull_cross = strategy_ema_hull_cross(df)
+            ema_cross = strategy_ema_cross_hull_trend(df)
             resultados.append({
                 'Moeda': symbol,
                 'Último Preço': df['close'].iloc[-1],
                 'EMA55': df['EMA55'].iloc[-1],
                 'HULL55': df['HULL55'].iloc[-1],
-                'Sinal Hull/EMA': sinal1,
-                'Sinal EMA/HullTrend': sinal2
+                'Hull Cross': hull_cross,
+                'EMA50 Cross': ema_cross
             })
         except Exception as e:
             resultados.append({'Moeda': symbol, 'Erro': str(e)})
