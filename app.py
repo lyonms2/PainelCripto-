@@ -1,25 +1,25 @@
 import streamlit as st
 from indicator import fetch_signals
+from strategies import strategy_ema_hull_cross
 from config import SYMBOLS, TIMEFRAME
+from view import show_results
 
-st.title("Análise EMA50 Kucoin")
+st.title("Análise EMA/HULL Kucoin")
 
-# Botão para atualizar dados
 if st.button("Atualizar dados"):
     resultados = []
     progress_bar = st.progress(0)
     status_text = st.empty()
     total = len(SYMBOLS)
-
+    # Coleta os dados de cada símbolo e aplica a estratégia
     for idx, symbol in enumerate(SYMBOLS, 1):
         status_text.text(f"Analisando: {symbol} ({idx}/{total}) | Faltam: {total - idx}")
-        result = fetch_signals([symbol], TIMEFRAME)[0]
+        result = fetch_signals([symbol], TIMEFRAME, strategy_ema_hull_cross)[0]
         resultados.append(result)
         progress_bar.progress(idx / total)
-
     progress_bar.empty()
     status_text.empty()
     st.success("Análise finalizada!")
-    st.dataframe(resultados)
+    show_results(resultados)
 else:
     st.info("Clique em 'Atualizar dados' para rodar a análise.")
