@@ -1,6 +1,5 @@
 import streamlit as st
 from indicator import fetch_signals
-from strategies import strategy_ema_hull_cross
 from config import SYMBOLS, TIMEFRAME
 from view import show_results
 
@@ -11,10 +10,9 @@ if st.button("Atualizar dados"):
     progress_bar = st.progress(0)
     status_text = st.empty()
     total = len(SYMBOLS)
-    # Coleta os dados de cada símbolo e aplica a estratégia
     for idx, symbol in enumerate(SYMBOLS, 1):
         status_text.text(f"Analisando: {symbol} ({idx}/{total}) | Faltam: {total - idx}")
-        result = fetch_signals([symbol], TIMEFRAME, strategy_ema_hull_cross)[0]
+        result = fetch_signals([symbol], TIMEFRAME)[0]
         resultados.append(result)
         progress_bar.progress(idx / total)
     progress_bar.empty()
