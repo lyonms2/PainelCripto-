@@ -5,13 +5,14 @@ def get_ema(prices, period=50):
     return prices.ewm(span=period).mean()
 
 def get_signal(df):
-    # Precisa de pelo menos 2 candles para detectar cruzamento
-    if len(df) < 2:
+    # Precisa de pelo menos 3 candles para detectar cruzamento na última vela fechada
+    if len(df) < 3:
         return "-"
-    close_now = df['close'].iloc[-1]
-    close_prev = df['close'].iloc[-2]
-    ema_now = df['EMA50'].iloc[-1]
-    ema_prev = df['EMA50'].iloc[-2]
+    # Usar a penúltima vela como referência (última fechada)
+    close_now = df['close'].iloc[-2]
+    close_prev = df['close'].iloc[-3]
+    ema_now = df['EMA50'].iloc[-2]
+    ema_prev = df['EMA50'].iloc[-3]
 
     # Cruzamento para cima (Compra)
     if close_prev <= ema_prev and close_now > ema_now:
