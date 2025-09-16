@@ -3,10 +3,10 @@ import pandas as pd
 import numpy as np
 from strategies import strategy_ema_hull_cross, strategy_ema_cross_hull_trend
 
-def get_ema(prices, period=55):
+def get_ema(prices, period=50):
     return prices.ewm(span=period).mean()
 
-def get_hull(prices, period=55):
+def get_hull(prices, period=20):
     def wma(series, period):
         weights = np.arange(1, period + 1)
         return series.rolling(period).apply(lambda x: np.dot(x, weights) / weights.sum(), raw=True)
@@ -19,8 +19,8 @@ def get_hull(prices, period=55):
 
 def build_dataframe(ohlcv):
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-    df['EMA55'] = get_ema(df['close'], 55)
-    df['HULL55'] = get_hull(df['close'], 55)
+    df['EMA50'] = get_ema(df['close'], 50)
+    df['HULL20'] = get_hull(df['close'], 20)
     return df
 
 def fetch_signals(symbols, timeframe):
@@ -35,8 +35,8 @@ def fetch_signals(symbols, timeframe):
             resultados.append({
                 'Moeda': symbol,
                 'Último Preço': df['close'].iloc[-1],
-                'EMA55': df['EMA55'].iloc[-1],
-                'HULL55': df['HULL55'].iloc[-1],
+                'EMA50': df['EMA50'].iloc[-1],
+                'HULL20': df['HULL20'].iloc[-1],
                 'Hull Cross': hull_cross,
                 'EMA50 Cross': ema_cross
             })
