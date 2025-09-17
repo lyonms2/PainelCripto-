@@ -210,7 +210,7 @@ def create_wavetrend_chart(df, symbol):
         shared_xaxis=True,
         vertical_spacing=0.03,
         subplot_titles=[f'{symbol} - Preço', 'WaveTrend Oscillator'],
-        row_width=[0.3, 0.7]
+        row_heights=[0.3, 0.7]
     )
     
     # Gráfico de preço (candlestick)
