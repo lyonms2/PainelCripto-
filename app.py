@@ -207,7 +207,7 @@ def create_wavetrend_chart(df, symbol):
     """Cria gráfico detalhado do WaveTrend"""
     fig = make_subplots(
         rows=2, cols=1,
-        shared_xaxis=True,
+        shared_xaxes=True,
         vertical_spacing=0.03,
         subplot_titles=[f'{symbol} - Preço', 'WaveTrend Oscillator'],
         row_heights=[0.3, 0.7]
@@ -379,7 +379,7 @@ if 'resultados' in st.session_state:
         # Exibir tabela
         st.subheader(f"📊 Resultados ({len(filtered_df)} moedas)")
         display_df = filtered_df.drop(columns=['raw_data'], errors='ignore')
-        st.dataframe(display_df, use_container_width=True, height=400)
+        st.dataframe(display_df, width="stretch", height=400)
 
 # Análise individual
 if st.session_state.get('individual_analysis', False):
@@ -401,7 +401,7 @@ if st.session_state.get('individual_analysis', False):
             if coin_data and coin_data['raw_data'] is not None:
                 df = coin_data['raw_data']
                 chart = create_wavetrend_chart(df, selected_coin)
-                st.plotly_chart(chart, use_container_width=True)
+                st.plotly_chart(chart, width="stretch")
                 
                 # Informações detalhadas
                 col1, col2, col3 = st.columns(3)
