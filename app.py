@@ -15,7 +15,7 @@ SYMBOLS = [
     'DYM/USDT', 'GMT/USDT', 'MEME/USDT', 'BOME/USDT', 'YGG/USDT', 'RUNE/USDT', 'CELO/USDT', 'WLD/USDT', 'ONDO/USDT', 'SEI/USDT', 'JUP/USDT', 'POPCAT/USDT', 'TAO/USDT',
     'TON/USDT'
 ]
-TIMEFRAME = '15m'
+TIMEFRAME = '4h'
 
 # --- Funções WaveTrend ---
 def add_wavetrend(df, 
