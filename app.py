@@ -386,6 +386,13 @@ if st.session_state.get('individual_analysis', False):
     st.markdown("---")
     st.subheader("🔍 Análise Detalhada Individual")
     
+    # Botão para fechar a análise individual
+    col1, col2 = st.columns([3, 1])
+    with col2:
+        if st.button("❌ Fechar Análise"):
+            st.session_state['individual_analysis'] = False
+            st.rerun()
+    
     if 'resultados' in st.session_state:
         available_coins = [r['Moeda'] for r in st.session_state['resultados'] if 'Erro' not in r]
         selected_coin = st.selectbox("Escolha uma moeda para análise detalhada:", available_coins)
@@ -414,8 +421,6 @@ if st.session_state.get('individual_analysis', False):
                 with col3:
                     st.metric("Volume", coin_data['Volume'])
                     st.write("**Status:**", coin_data['Tendência'])
-    
-    st.session_state['individual_analysis'] = False
 
 # Top sinais
 if st.session_state.get('top_signals', False):
