@@ -3,7 +3,7 @@ from indicator import fetch_signals
 from config import SYMBOLS, TIMEFRAME
 from view import show_results
 
-st.title("Análise EMA/HULL Kucoin")
+st.title("Análise EMA55, HULL55 e WaveTrend")
 
 if st.button("Atualizar dados"):
     resultados = []
