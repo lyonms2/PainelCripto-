@@ -14,9 +14,6 @@ plotly>=5.15.0
 # Utilitários para tempo e data
 python-dateutil>=2.8.0
 
-# Supressão de warnings (opcional)
-warnings
-
 # Dependências adicionais para estabilidade
 requests>=2.31.0
 urllib3>=1.26.0
