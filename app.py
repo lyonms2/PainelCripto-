@@ -697,16 +697,26 @@ if 'last_notifications' in st.session_state and st.session_state['last_notificat
         st.write("### 🕐 Últimas Notificações Enviadas:")
         for key, timestamp in sorted(st.session_state['last_notifications'].items(), 
                                    key=lambda x: x[1], reverse=True)[:20]:
-            symbol, signal_type = key.split('_')
-            signal_names = {
-                'OB': '🔴 Sobrecompra',
-                'OS': '🟢 Sobrevenda', 
-                'BULL_CROSS': '⬆️ Cruzamento Alta',
-                'BEAR_CROSS': '⬇️ Cruzamento Baixa'
-            }
-            signal_name = signal_names.get(signal_type, signal_type)
-            time_ago = datetime.now() - timestamp
-            st.write(f"**{symbol}** - {signal_name} - {timestamp.strftime('%H:%M:%S')} ({int(time_ago.total_seconds()/60)}min atrás)")
+            try:
+                # Split apenas no último underscore para lidar com símbolos que têm underscore
+                parts = key.rsplit('_', 1)
+                if len(parts) == 2:
+                    symbol, signal_type = parts
+                else:
+                    symbol, signal_type = key, 'UNKNOWN'
+                
+                signal_names = {
+                    'OB': '🔴 Sobrecompra',
+                    'OS': '🟢 Sobrevenda', 
+                    'BULL_CROSS': '⬆️ Cruzamento Alta',
+                    'BEAR_CROSS': '⬇️ Cruzamento Baixa'
+                }
+                signal_name = signal_names.get(signal_type, signal_type)
+                time_ago = datetime.now() - timestamp
+                st.write(f"**{symbol}** - {signal_name} - {timestamp.strftime('%H:%M:%S')} ({int(time_ago.total_seconds()/60)}min atrás)")
+            except Exception as e:
+                # Se houver erro, exibe a chave original
+                st.write(f"**{key}** - {timestamp.strftime('%H:%M:%S')}")
 
 # Informações sobre sinais
 with st.expander("ℹ️ Informações sobre os Sinais"):
