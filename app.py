@@ -561,7 +561,7 @@ auto_refresh = st.sidebar.checkbox("Auto Refresh + Notificações", value=False)
 refresh_interval = None
 
 if auto_refresh:
-    refresh_interval = st.sidebar.slider("Intervalo de refresh (segundos)", 30, 300, 60)
+    refresh_interval = st.sidebar.slider("Intervalo de refresh (segundos)", 30, 60, 300, 14400)
     st.sidebar.write(f"🔄 Próxima atualização em {refresh_interval}s")
     st.session_state['update_data'] = True
 
