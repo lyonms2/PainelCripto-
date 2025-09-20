@@ -133,8 +133,11 @@ def is_strong_signal(strength):
     """Verifica se é um sinal forte"""
     return "FORTE" in strength
 
-def should_notify(symbol, signal_type, last_notifications, cooldown_minutes):
+def should_notify(symbol, signal_type, last_notifications, cooldown_minutes, force_notify=False):
     """Verifica se deve notificar baseado no cooldown"""
+    if force_notify:
+        return True
+        
     key = f"{symbol}_{signal_type}"
     now = datetime.now()
     
@@ -146,11 +149,12 @@ def should_notify(symbol, signal_type, last_notifications, cooldown_minutes):
     last_notifications[key] = now
     return True
 
-def fetch_data_and_analyze(symbols, timeframe, params, telegram_config=None):
+def fetch_data_and_analyze(symbols, timeframe, params, telegram_config=None, debug_mode=False, force_notify=False):
     """Busca dados e realiza análise com notificações Telegram"""
     exchange = ccxt.kucoin()
     resultados = []
     notifications_sent = 0
+    debug_info = []
     
     # Inicializa sistema de notificações
     if 'last_notifications' not in st.session_state:
@@ -192,47 +196,118 @@ def fetch_data_and_analyze(symbols, timeframe, params, telegram_config=None):
                 'strength': signal_strength
             }
             
+            # Debug info para esta moeda
+            symbol_debug = {
+                'symbol': symbol,
+                'wt': current['WT'],
+                'wt_signal': current['WT_signal'],
+                'threshold': params['reversion_threshold'],
+                'ob_signal': current['OB'],
+                'os_signal': current['OS'],
+                'overbought': current['Sobrecompra'],
+                'oversold': current['Sobrevenda'],
+                'prev_overbought': prev['Sobrecompra'],
+                'prev_oversold': prev['Sobrevenda'],
+                'bull_cross': current['Bullish_Cross'],
+                'bear_cross': current['Bearish_Cross'],
+                'strength': signal_strength
+            }
+            
             # Verificar e enviar notificações Telegram
             if telegram_config and telegram_config['enabled']:
                 notifications_to_send = []
                 
                 # Verificar sinais OB/OS (cruzamentos específicos)
                 if telegram_config['notify_signals']:
-                    if current['OB'] and should_notify(symbol, 'OB', st.session_state['last_notifications'], telegram_config['cooldown']):
-                        if not telegram_config['strong_only'] or is_strong_signal(signal_strength):
-                            notifications_to_send.append(('OB', alert_data))
+                    if current['OB']:
+                        symbol_debug['ob_check'] = f"OB detectado: WT={current['WT']:.2f} > threshold={params['reversion_threshold']}"
+                        if should_notify(symbol, 'OB', st.session_state['last_notifications'], telegram_config['cooldown'], force_notify):
+                            if not telegram_config['strong_only'] or is_strong_signal(signal_strength):
+                                notifications_to_send.append(('OB', alert_data))
+                                symbol_debug['ob_will_notify'] = True
+                            else:
+                                symbol_debug['ob_blocked'] = "Bloqueado por filtro de força"
+                        else:
+                            symbol_debug['ob_blocked'] = "Bloqueado por cooldown"
                     
-                    if current['OS'] and should_notify(symbol, 'OS', st.session_state['last_notifications'], telegram_config['cooldown']):
-                        if not telegram_config['strong_only'] or is_strong_signal(signal_strength):
-                            notifications_to_send.append(('OS', alert_data))
+                    if current['OS']:
+                        symbol_debug['os_check'] = f"OS detectado: WT={current['WT']:.2f} < -threshold={-params['reversion_threshold']}"
+                        if should_notify(symbol, 'OS', st.session_state['last_notifications'], telegram_config['cooldown'], force_notify):
+                            if not telegram_config['strong_only'] or is_strong_signal(signal_strength):
+                                notifications_to_send.append(('OS', alert_data))
+                                symbol_debug['os_will_notify'] = True
+                            else:
+                                symbol_debug['os_blocked'] = "Bloqueado por filtro de força"
+                        else:
+                            symbol_debug['os_blocked'] = "Bloqueado por cooldown"
                 
                 # Verificar zonas de sobrecompra/sobrevenda (entrada nas zonas)
                 if telegram_config['notify_zones']:
                     # Verifica se entrou na zona de sobrecompra
-                    if current['Sobrecompra'] and not prev['Sobrecompra'] and should_notify(symbol, 'OVERBOUGHT_ZONE', st.session_state['last_notifications'], telegram_config['cooldown']):
-                        if not telegram_config['strong_only'] or is_strong_signal(signal_strength):
-                            notifications_to_send.append(('OVERBOUGHT_ZONE', alert_data))
+                    if current['Sobrecompra'] and not prev['Sobrecompra']:
+                        symbol_debug['overbought_zone'] = f"Entrada em zona sobrecompra: WT={current['WT']:.2f} > {params['reversion_threshold']}"
+                        if should_notify(symbol, 'OVERBOUGHT_ZONE', st.session_state['last_notifications'], telegram_config['cooldown'], force_notify):
+                            if not telegram_config['strong_only'] or is_strong_signal(signal_strength):
+                                notifications_to_send.append(('OVERBOUGHT_ZONE', alert_data))
+                                symbol_debug['overbought_will_notify'] = True
+                            else:
+                                symbol_debug['overbought_blocked'] = "Bloqueado por filtro de força"
+                        else:
+                            symbol_debug['overbought_blocked'] = "Bloqueado por cooldown"
+                    elif current['Sobrecompra']:
+                        symbol_debug['overbought_zone'] = "Já está em zona sobrecompra (sem notificação)"
                     
                     # Verifica se entrou na zona de sobrevenda
-                    if current['Sobrevenda'] and not prev['Sobrevenda'] and should_notify(symbol, 'OVERSOLD_ZONE', st.session_state['last_notifications'], telegram_config['cooldown']):
-                        if not telegram_config['strong_only'] or is_strong_signal(signal_strength):
-                            notifications_to_send.append(('OVERSOLD_ZONE', alert_data))
+                    if current['Sobrevenda'] and not prev['Sobrevenda']:
+                        symbol_debug['oversold_zone'] = f"Entrada em zona sobrevenda: WT={current['WT']:.2f} < {-params['reversion_threshold']}"
+                        if should_notify(symbol, 'OVERSOLD_ZONE', st.session_state['last_notifications'], telegram_config['cooldown'], force_notify):
+                            if not telegram_config['strong_only'] or is_strong_signal(signal_strength):
+                                notifications_to_send.append(('OVERSOLD_ZONE', alert_data))
+                                symbol_debug['oversold_will_notify'] = True
+                            else:
+                                symbol_debug['oversold_blocked'] = "Bloqueado por filtro de força"
+                        else:
+                            symbol_debug['oversold_blocked'] = "Bloqueado por cooldown"
+                    elif current['Sobrevenda']:
+                        symbol_debug['oversold_zone'] = "Já está em zona sobrevenda (sem notificação)"
                 
                 # Verificar cruzamentos
                 if telegram_config['notify_crosses']:
-                    if current['Bullish_Cross'] and should_notify(symbol, 'BULL_CROSS', st.session_state['last_notifications'], telegram_config['cooldown']):
-                        if not telegram_config['strong_only'] or is_strong_signal(signal_strength):
-                            notifications_to_send.append(('BULL_CROSS', alert_data))
+                    if current['Bullish_Cross']:
+                        symbol_debug['bull_cross_check'] = "Bull cross detectado"
+                        if should_notify(symbol, 'BULL_CROSS', st.session_state['last_notifications'], telegram_config['cooldown'], force_notify):
+                            if not telegram_config['strong_only'] or is_strong_signal(signal_strength):
+                                notifications_to_send.append(('BULL_CROSS', alert_data))
+                                symbol_debug['bull_cross_will_notify'] = True
+                            else:
+                                symbol_debug['bull_cross_blocked'] = "Bloqueado por filtro de força"
+                        else:
+                            symbol_debug['bull_cross_blocked'] = "Bloqueado por cooldown"
                     
-                    if current['Bearish_Cross'] and should_notify(symbol, 'BEAR_CROSS', st.session_state['last_notifications'], telegram_config['cooldown']):
-                        if not telegram_config['strong_only'] or is_strong_signal(signal_strength):
-                            notifications_to_send.append(('BEAR_CROSS', alert_data))
+                    if current['Bearish_Cross']:
+                        symbol_debug['bear_cross_check'] = "Bear cross detectado"
+                        if should_notify(symbol, 'BEAR_CROSS', st.session_state['last_notifications'], telegram_config['cooldown'], force_notify):
+                            if not telegram_config['strong_only'] or is_strong_signal(signal_strength):
+                                notifications_to_send.append(('BEAR_CROSS', alert_data))
+                                symbol_debug['bear_cross_will_notify'] = True
+                            else:
+                                symbol_debug['bear_cross_blocked'] = "Bloqueado por filtro de força"
+                        else:
+                            symbol_debug['bear_cross_blocked'] = "Bloqueado por cooldown"
+                
+                symbol_debug['notifications_to_send'] = len(notifications_to_send)
                 
                 # Enviar notificações
                 for signal_type, data in notifications_to_send:
                     message = format_telegram_alert(symbol, signal_type, data, timeframe)
                     if send_telegram_message(telegram_config['token'], telegram_config['chat_id'], message):
                         notifications_sent += 1
+                        symbol_debug['sent_success'] = True
+                    else:
+                        symbol_debug['sent_failed'] = True
+            
+            if debug_mode and (any('check' in str(symbol_debug) or 'zone' in str(symbol_debug) for _ in [1])):
+                debug_info.append(symbol_debug)
             
             resultados.append({
                 'Moeda': symbol.replace('/USDT', ''),
@@ -258,8 +333,10 @@ def fetch_data_and_analyze(symbols, timeframe, params, telegram_config=None):
                 'Erro': str(e)[:50],
                 'raw_data': None
             })
+            if debug_mode:
+                debug_info.append({'symbol': symbol, 'error': str(e)})
     
-    return resultados, notifications_sent
+    return resultados, notifications_sent, debug_info if debug_mode else None
 
 def create_wavetrend_chart(df, symbol):
     """Cria gráfico detalhado do WaveTrend"""
@@ -458,6 +535,11 @@ if st.sidebar.button("🧪 Testar Telegram"):
     else:
         st.sidebar.warning("⚠️ Preencha Bot Token e Chat ID")
 
+# Debug das notificações
+st.sidebar.subheader("🔍 Debug Notificações")
+debug_mode = st.sidebar.checkbox("Modo Debug", help="Mostra informações detalhadas sobre as notificações")
+force_notify = st.sidebar.checkbox("Forçar Notificações", help="Ignora o cooldown para testes")
+
 # Parâmetros do WaveTrend
 st.sidebar.subheader("Parâmetros WaveTrend")
 channel_length = st.sidebar.slider("Channel Length", 5, 30, 10)
@@ -540,7 +622,12 @@ if telegram_bot_token and telegram_chat_id:
 # Análise principal
 if st.session_state.get('update_data', False):
     with st.spinner('🔄 Analisando mercado e enviando notificações...'):
-        resultados, notifications_sent = fetch_data_and_analyze(SYMBOLS, selected_timeframe, params, telegram_config)
+        if debug_mode:
+            resultados, notifications_sent, debug_info = fetch_data_and_analyze(SYMBOLS, selected_timeframe, params, telegram_config, debug_mode, force_notify)
+        else:
+            result = fetch_data_and_analyze(SYMBOLS, selected_timeframe, params, telegram_config, debug_mode, force_notify)
+            resultados, notifications_sent = result[0], result[1]
+            debug_info = None
     
     st.session_state['resultados'] = resultados
     st.session_state['update_data'] = False
@@ -549,6 +636,64 @@ if st.session_state.get('update_data', False):
     if notifications_sent > 0:
         success_msg += f" 📱 {notifications_sent} notificações enviadas!"
     st.success(success_msg)
+    
+    # Mostrar informações de debug se ativado
+    if debug_mode and debug_info:
+        st.subheader("🔍 Informações de Debug")
+        
+        # Filtrar apenas moedas com sinais detectados
+        relevant_debug = [d for d in debug_info if any(key.endswith('_check') or 'zone' in key or 'will_notify' in key or 'blocked' in key for key in d.keys())]
+        
+        if relevant_debug:
+            for info in relevant_debug[:10]:  # Mostrar apenas as primeiras 10
+                with st.expander(f"📊 Debug {info['symbol']} - WT: {info['wt']:.2f}"):
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.write("**Valores Atuais:**")
+                        st.write(f"• WT: {info['wt']:.2f}")
+                        st.write(f"• WT Signal: {info['wt_signal']:.2f}")
+                        st.write(f"• Threshold: {info['threshold']}")
+                        st.write(f"• Força: {info['strength']}")
+                        
+                        st.write("**Estados:**")
+                        st.write(f"• Sobrecompra: {'✅' if info['overbought'] else '❌'}")
+                        st.write(f"• Sobrevenda: {'✅' if info['oversold'] else '❌'}")
+                        st.write(f"• Prev Sobrecompra: {'✅' if info['prev_overbought'] else '❌'}")
+                        st.write(f"• Prev Sobrevenda: {'✅' if info['prev_oversold'] else '❌'}")
+                    
+                    with col2:
+                        st.write("**Detecções:**")
+                        for key, value in info.items():
+                            if 'check' in key or 'zone' in key:
+                                st.write(f"• {key}: {value}")
+                        
+                        st.write("**Status Notificação:**")
+                        for key, value in info.items():
+                            if 'will_notify' in key or 'blocked' in key:
+                                st.write(f"• {key}: {value}")
+                        
+                        if 'notifications_to_send' in info:
+                            st.write(f"• **Total para enviar**: {info['notifications_to_send']}")
+        else:
+            st.info("🔍 Nenhum sinal detectado nesta análise.")
+            
+            # Mostrar algumas moedas para verificar os valores
+            st.write("**Valores WT de algumas moedas para referência:**")
+            for i, info in enumerate(debug_info[:5]):
+                st.write(f"• **{info['symbol']}**: WT={info['wt']:.2f}, Threshold=±{info['threshold']}")
+        
+        # Configurações atuais
+        st.write("### ⚙️ Configurações Atuais")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write(f"• **Notificar OB/OS**: {'✅' if telegram_config and telegram_config.get('notify_signals') else '❌'}")
+            st.write(f"• **Notificar Zonas**: {'✅' if telegram_config and telegram_config.get('notify_zones') else '❌'}")
+            st.write(f"• **Notificar Cruzamentos**: {'✅' if telegram_config and telegram_config.get('notify_crosses') else '❌'}")
+        with col2:
+            st.write(f"• **Apenas Sinais Fortes**: {'✅' if telegram_config and telegram_config.get('strong_only') else '❌'}")
+            st.write(f"• **Cooldown**: {telegram_config.get('cooldown', 0) if telegram_config else 0} min")
+            st.write(f"• **Forçar Notificações**: {'✅' if force_notify else '❌'}")
 
 # Exibir resultados
 if 'resultados' in st.session_state:
