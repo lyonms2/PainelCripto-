@@ -1,27 +1,7 @@
-# Streamlit e interface
-streamlit>=1.28.0
+streamlit
 streamlit-extras
-
-# Trading e dados de mercado
-ccxt>=4.1.0
-
-# Análise de dados
-pandas>=2.0.0
-numpy>=1.24.0
-
-# Gráficos e visualização
-plotly>=5.15.0
-
-# Utilitários para tempo e data
-python-dateutil>=2.8.0
-
-# Dependências adicionais para estabilidade
-requests>=2.31.0
-urllib3>=1.26.0
-cryptography>=41.0.0
-
-# Para melhor performance com pandas
-pyarrow>=12.0.0
-
-# Timezone handling
-pytz>=2023.3
+ccxt
+pandas
+numpy
+plotly
+requests
