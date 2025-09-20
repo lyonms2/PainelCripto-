@@ -558,10 +558,11 @@ price_source = st.sidebar.selectbox("Fonte do Preço", price_sources, index=0)
 
 # Auto-refresh com notificações
 auto_refresh = st.sidebar.checkbox("Auto Refresh + Notificações", value=False)
+refresh_interval = None
+
 if auto_refresh:
     refresh_interval = st.sidebar.slider("Intervalo de refresh (segundos)", 30, 300, 60)
     st.sidebar.write(f"🔄 Próxima atualização em {refresh_interval}s")
-    st_autorefresh(interval=refresh_interval*1000, limit=None, key="refresh_counter")
     st.session_state['update_data'] = True
 
 # ============================
@@ -591,8 +592,8 @@ else:
     st.warning("⚠️ Configure o Telegram na sidebar para receber notificações.")
 
 # Auto-refresh logic
-if auto_refresh:
-    count = st_autorefresh(interval=refresh_interval*60000, limit=None, key="refresh_counter")
+if auto_refresh and refresh_interval:
+    count = st_autorefresh(interval=refresh_interval * 1000, limit=None, key="refresh_main")
     st.session_state['update_data'] = True
 
 # Parâmetros para análise
