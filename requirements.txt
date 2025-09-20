@@ -1,5 +1,5 @@
 streamlit
-streamlit-extras
+streamlit-autorefresh
 ccxt
 pandas
 numpy
