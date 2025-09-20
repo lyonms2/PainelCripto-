@@ -36,7 +36,9 @@ def format_telegram_alert(symbol, signal_type, data, timeframe):
         'OB': '🔴',
         'OS': '🟢',
         'BULL_CROSS': '⬆️',
-        'BEAR_CROSS': '⬇️'
+        'BEAR_CROSS': '⬇️',
+        'OVERBOUGHT_ZONE': '🟣',
+        'OVERSOLD_ZONE': '🔵'
     }
     
     emoji = emojis.get(signal_type, '📊')
@@ -49,6 +51,10 @@ def format_telegram_alert(symbol, signal_type, data, timeframe):
         signal_name = "CRUZAMENTO DE ALTA"
     elif signal_type == 'BEAR_CROSS':
         signal_name = "CRUZAMENTO DE BAIXA"
+    elif signal_type == 'OVERBOUGHT_ZONE':
+        signal_name = "ZONA DE SOBRECOMPRA"
+    elif signal_type == 'OVERSOLD_ZONE':
+        signal_name = "ZONA DE SOBREVENDA"
     else:
         signal_name = "SINAL DETECTADO"
     
@@ -190,7 +196,7 @@ def fetch_data_and_analyze(symbols, timeframe, params, telegram_config=None):
             if telegram_config and telegram_config['enabled']:
                 notifications_to_send = []
                 
-                # Verificar sinais OB/OS
+                # Verificar sinais OB/OS (cruzamentos específicos)
                 if telegram_config['notify_signals']:
                     if current['OB'] and should_notify(symbol, 'OB', st.session_state['last_notifications'], telegram_config['cooldown']):
                         if not telegram_config['strong_only'] or is_strong_signal(signal_strength):
@@ -199,6 +205,18 @@ def fetch_data_and_analyze(symbols, timeframe, params, telegram_config=None):
                     if current['OS'] and should_notify(symbol, 'OS', st.session_state['last_notifications'], telegram_config['cooldown']):
                         if not telegram_config['strong_only'] or is_strong_signal(signal_strength):
                             notifications_to_send.append(('OS', alert_data))
+                
+                # Verificar zonas de sobrecompra/sobrevenda (entrada nas zonas)
+                if telegram_config['notify_zones']:
+                    # Verifica se entrou na zona de sobrecompra
+                    if current['Sobrecompra'] and not prev['Sobrecompra'] and should_notify(symbol, 'OVERBOUGHT_ZONE', st.session_state['last_notifications'], telegram_config['cooldown']):
+                        if not telegram_config['strong_only'] or is_strong_signal(signal_strength):
+                            notifications_to_send.append(('OVERBOUGHT_ZONE', alert_data))
+                    
+                    # Verifica se entrou na zona de sobrevenda
+                    if current['Sobrevenda'] and not prev['Sobrevenda'] and should_notify(symbol, 'OVERSOLD_ZONE', st.session_state['last_notifications'], telegram_config['cooldown']):
+                        if not telegram_config['strong_only'] or is_strong_signal(signal_strength):
+                            notifications_to_send.append(('OVERSOLD_ZONE', alert_data))
                 
                 # Verificar cruzamentos
                 if telegram_config['notify_crosses']:
@@ -421,6 +439,7 @@ telegram_chat_id = st.sidebar.text_input("Chat ID", help="Seu chat ID ou ID do g
 st.sidebar.subheader("🔔 Configurações de Notificação")
 notify_on_signals = st.sidebar.checkbox("Notificar Sinais OB/OS", value=True)
 notify_on_crosses = st.sidebar.checkbox("Notificar Cruzamentos", value=True)
+notify_on_zones = st.sidebar.checkbox("Notificar Zonas (Sobrecompra/Sobrevenda)", value=True)
 notify_strong_only = st.sidebar.checkbox("Apenas Sinais Fortes", value=False)
 notification_cooldown = st.sidebar.slider("Intervalo entre notificações (min)", 5, 60, 15)
 
@@ -513,6 +532,7 @@ if telegram_bot_token and telegram_chat_id:
         'chat_id': telegram_chat_id,
         'notify_signals': notify_on_signals,
         'notify_crosses': notify_on_crosses,
+        'notify_zones': notify_on_zones,
         'strong_only': notify_strong_only,
         'cooldown': notification_cooldown
     }
@@ -669,8 +689,9 @@ with st.expander("🤖 Como Configurar o Telegram Bot"):
     4. Use esse número como Chat ID
     
     #### 3. Configurações Recomendadas:
-    - ✅ **Notificar Sinais OB/OS**: Para alertas de sobrecompra/sobrevenda
+    - ✅ **Notificar Sinais OB/OS**: Para alertas de sobrecompra/sobrevenda com cruzamento
     - ✅ **Notificar Cruzamentos**: Para mudanças de tendência
+    - ✅ **Notificar Zonas**: Para entrada em zonas de sobrecompra/sobrevenda
     - ⚠️ **Apenas Sinais Fortes**: Para reduzir spam de notificações
     - 🕐 **Intervalo**: 15-30 minutos para evitar muitas mensagens
     
@@ -709,7 +730,9 @@ if 'last_notifications' in st.session_state and st.session_state['last_notificat
                     'OB': '🔴 Sobrecompra',
                     'OS': '🟢 Sobrevenda', 
                     'BULL_CROSS': '⬆️ Cruzamento Alta',
-                    'BEAR_CROSS': '⬇️ Cruzamento Baixa'
+                    'BEAR_CROSS': '⬇️ Cruzamento Baixa',
+                    'OVERBOUGHT_ZONE': '🟣 Zona Sobrecompra',
+                    'OVERSOLD_ZONE': '🔵 Zona Sobrevenda'
                 }
                 signal_name = signal_names.get(signal_type, signal_type)
                 time_ago = datetime.now() - timestamp
