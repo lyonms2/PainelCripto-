@@ -1,4 +1,5 @@
 import streamlit as st
+from streamlit_extras.st_autorefresh import st_autorefresh
 import ccxt
 import pandas as pd
 import numpy as np
@@ -560,6 +561,8 @@ auto_refresh = st.sidebar.checkbox("Auto Refresh + Notificações", value=False)
 if auto_refresh:
     refresh_interval = st.sidebar.slider("Intervalo de refresh (segundos)", 30, 300, 60)
     st.sidebar.write(f"🔄 Próxima atualização em {refresh_interval}s")
+    st_autorefresh(interval=refresh_interval*1000, limit=None, key="refresh_counter")
+    st.session_state['update_data'] = True
 
 # ============================
 # INTERFACE PRINCIPAL
@@ -588,12 +591,8 @@ else:
     st.warning("⚠️ Configure o Telegram na sidebar para receber notificações.")
 
 # Auto-refresh logic
-if auto_refresh and 'last_update' not in st.session_state:
-    st.session_state['last_update'] = time.time()
-    st.session_state['update_data'] = True
-
-if auto_refresh and time.time() - st.session_state.get('last_update', 0) > refresh_interval:
-    st.session_state['last_update'] = time.time()
+if auto_refresh:
+    count = st_autorefresh(interval=refresh_interval*60000, limit=None, key="refresh_counter")
     st.session_state['update_data'] = True
 
 # Parâmetros para análise
