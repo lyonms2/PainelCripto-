@@ -1,5 +1,5 @@
 import streamlit as st
-from streamlit_extras.st_autorefresh import st_autorefresh
+from streamlit_autorefresh import st_autorefresh
 import ccxt
 import pandas as pd
 import numpy as np
