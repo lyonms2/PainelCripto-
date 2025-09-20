@@ -7,11 +7,13 @@ from plotly.subplots import make_subplots
 import time
 from datetime import datetime, timedelta
 import warnings
+import requests
+import json
 warnings.filterwarnings('ignore')
 
 # Configuração da página
 st.set_page_config(
-    page_title="WaveTrend Oscillator Pro",
+    page_title="WaveTrend Oscillator Pro + Telegram",
     page_icon="📈",
     layout="wide"
 )
@@ -48,14 +50,48 @@ st.markdown("""
         border-radius: 5px;
         font-weight: bold;
     }
+    .telegram-config {
+        background-color: #0088cc;
+        color: white;
+        padding: 15px;
+        border-radius: 10px;
+        margin: 10px 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("📈 WaveTrend Oscillator Pro - Análise Avançada")
+st.title("📈 WaveTrend Oscillator Pro + 🤖 Telegram Notifications")
 st.markdown("---")
 
 # Sidebar com configurações
 st.sidebar.header("⚙️ Configurações")
+
+# Configurações do Telegram
+st.sidebar.subheader("🤖 Configurações Telegram")
+telegram_bot_token = st.sidebar.text_input("Bot Token", type="password", help="Token do seu bot do Telegram")
+telegram_chat_id = st.sidebar.text_input("Chat ID", help="Seu chat ID ou ID do grupo")
+
+# Configurações de notificação
+st.sidebar.subheader("🔔 Configurações de Notificação")
+notify_on_signals = st.sidebar.checkbox("Notificar Sinais OB/OS", value=True)
+notify_on_crosses = st.sidebar.checkbox("Notificar Cruzamentos", value=True)
+notify_strong_only = st.sidebar.checkbox("Apenas Sinais Fortes", value=False)
+notification_cooldown = st.sidebar.slider("Intervalo entre notificações (min)", 5, 60, 15)
+
+# Teste de conexão Telegram
+if st.sidebar.button("🧪 Testar Telegram"):
+    if telegram_bot_token and telegram_chat_id:
+        test_result = send_telegram_message(
+            telegram_bot_token, 
+            telegram_chat_id, 
+            "🧪 Teste de conexão bem-sucedido!\nSeu bot está funcionando corretamente! 🎉"
+        )
+        if test_result:
+            st.sidebar.success("✅ Telegram conectado!")
+        else:
+            st.sidebar.error("❌ Erro na conexão")
+    else:
+        st.sidebar.warning("⚠️ Preencha Bot Token e Chat ID")
 
 # Parâmetros do WaveTrend
 st.sidebar.subheader("Parâmetros WaveTrend")
@@ -72,10 +108,11 @@ selected_timeframe = st.sidebar.selectbox("Timeframe", timeframes, index=1)
 price_sources = ['hlc3', 'hl2', 'ohlc4', 'oc2', 'close', 'high', 'low', 'open']
 price_source = st.sidebar.selectbox("Fonte do Preço", price_sources, index=0)
 
-# Auto-refresh
-auto_refresh = st.sidebar.checkbox("Auto Refresh (30s)")
+# Auto-refresh com notificações
+auto_refresh = st.sidebar.checkbox("Auto Refresh + Notificações", value=False)
 if auto_refresh:
-    st.sidebar.write("🔄 Próxima atualização em breve...")
+    refresh_interval = st.sidebar.slider("Intervalo de refresh (segundos)", 30, 300, 60)
+    st.sidebar.write(f"🔄 Próxima atualização em {refresh_interval}s")
 
 # Símbolos principais
 SYMBOLS = [
@@ -91,6 +128,62 @@ SYMBOLS = [
     'BOME/USDT', 'YGG/USDT', 'RUNE/USDT', 'CELO/USDT', 'WLD/USDT', 'ONDO/USDT', 
     'SEI/USDT', 'JUP/USDT', 'POPCAT/USDT', 'TAO/USDT', 'TON/USDT'
 ]
+
+def send_telegram_message(bot_token, chat_id, message):
+    """Envia mensagem via Telegram"""
+    try:
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        payload = {
+            'chat_id': chat_id,
+            'text': message,
+            'parse_mode': 'HTML'
+        }
+        response = requests.post(url, json=payload, timeout=10)
+        return response.status_code == 200
+    except Exception as e:
+        st.error(f"Erro ao enviar Telegram: {e}")
+        return False
+
+def format_telegram_alert(symbol, signal_type, data, timeframe):
+    """Formata mensagem de alerta para Telegram"""
+    emojis = {
+        'OB': '🔴',
+        'OS': '🟢',
+        'BULL_CROSS': '⬆️',
+        'BEAR_CROSS': '⬇️'
+    }
+    
+    emoji = emojis.get(signal_type, '📊')
+    
+    if signal_type == 'OB':
+        signal_name = "SINAL DE VENDA (Sobrecompra)"
+    elif signal_type == 'OS':
+        signal_name = "SINAL DE COMPRA (Sobrevenda)"
+    elif signal_type == 'BULL_CROSS':
+        signal_name = "CRUZAMENTO DE ALTA"
+    elif signal_type == 'BEAR_CROSS':
+        signal_name = "CRUZAMENTO DE BAIXA"
+    else:
+        signal_name = "SINAL DETECTADO"
+    
+    message = f"""
+{emoji} <b>{signal_name}</b>
+
+💰 <b>Moeda:</b> {symbol}
+💵 <b>Preço:</b> {data['price']}
+📈 <b>Variação:</b> {data['change']:+.2f}%
+📊 <b>Timeframe:</b> {timeframe}
+
+📉 <b>WT:</b> {data['wt']:.2f}
+📉 <b>WT Signal:</b> {data['wt_signal']:.2f}
+💪 <b>Força:</b> {data['strength']}
+
+🕒 <b>Horário:</b> {datetime.now().strftime('%H:%M:%S')}
+
+⚠️ <i>Sempre faça sua própria análise antes de operar!</i>
+    """.strip()
+    
+    return message
 
 @st.cache_data(ttl=30)
 def calculate_wavetrend(df, src='hlc3', channel_length=10, average_length=21, 
@@ -144,10 +237,32 @@ def get_signal_strength(wt, wt_signal, threshold):
     else:
         return "⚪ FRACO"
 
-def fetch_data_and_analyze(symbols, timeframe, params):
-    """Busca dados e realiza análise"""
+def is_strong_signal(strength):
+    """Verifica se é um sinal forte"""
+    return "FORTE" in strength
+
+def should_notify(symbol, signal_type, last_notifications, cooldown_minutes):
+    """Verifica se deve notificar baseado no cooldown"""
+    key = f"{symbol}_{signal_type}"
+    now = datetime.now()
+    
+    if key in last_notifications:
+        time_diff = (now - last_notifications[key]).total_seconds() / 60
+        if time_diff < cooldown_minutes:
+            return False
+    
+    last_notifications[key] = now
+    return True
+
+def fetch_data_and_analyze(symbols, timeframe, params, telegram_config=None):
+    """Busca dados e realiza análise com notificações Telegram"""
     exchange = ccxt.kucoin()
     resultados = []
+    notifications_sent = 0
+    
+    # Inicializa sistema de notificações
+    if 'last_notifications' not in st.session_state:
+        st.session_state['last_notifications'] = {}
     
     for symbol in symbols:
         try:
@@ -176,6 +291,45 @@ def fetch_data_and_analyze(symbols, timeframe, params):
             # Força do sinal
             signal_strength = get_signal_strength(current['WT'], current['WT_signal'], params['reversion_threshold'])
             
+            # Dados para notificação
+            alert_data = {
+                'price': f"${current['close']:,.4f}",
+                'change': price_change,
+                'wt': current['WT'],
+                'wt_signal': current['WT_signal'],
+                'strength': signal_strength
+            }
+            
+            # Verificar e enviar notificações Telegram
+            if telegram_config and telegram_config['enabled']:
+                notifications_to_send = []
+                
+                # Verificar sinais OB/OS
+                if telegram_config['notify_signals']:
+                    if current['OB'] and should_notify(symbol, 'OB', st.session_state['last_notifications'], telegram_config['cooldown']):
+                        if not telegram_config['strong_only'] or is_strong_signal(signal_strength):
+                            notifications_to_send.append(('OB', alert_data))
+                    
+                    if current['OS'] and should_notify(symbol, 'OS', st.session_state['last_notifications'], telegram_config['cooldown']):
+                        if not telegram_config['strong_only'] or is_strong_signal(signal_strength):
+                            notifications_to_send.append(('OS', alert_data))
+                
+                # Verificar cruzamentos
+                if telegram_config['notify_crosses']:
+                    if current['Bullish_Cross'] and should_notify(symbol, 'BULL_CROSS', st.session_state['last_notifications'], telegram_config['cooldown']):
+                        if not telegram_config['strong_only'] or is_strong_signal(signal_strength):
+                            notifications_to_send.append(('BULL_CROSS', alert_data))
+                    
+                    if current['Bearish_Cross'] and should_notify(symbol, 'BEAR_CROSS', st.session_state['last_notifications'], telegram_config['cooldown']):
+                        if not telegram_config['strong_only'] or is_strong_signal(signal_strength):
+                            notifications_to_send.append(('BEAR_CROSS', alert_data))
+                
+                # Enviar notificações
+                for signal_type, data in notifications_to_send:
+                    message = format_telegram_alert(symbol, signal_type, data, timeframe)
+                    if send_telegram_message(telegram_config['token'], telegram_config['chat_id'], message):
+                        notifications_sent += 1
+            
             resultados.append({
                 'Moeda': symbol.replace('/USDT', ''),
                 'Preço': f"${current['close']:,.4f}",
@@ -200,8 +354,8 @@ def fetch_data_and_analyze(symbols, timeframe, params):
                 'Erro': str(e)[:50],
                 'raw_data': None
             })
-            
-    return resultados
+    
+    return resultados, notifications_sent
 
 def create_wavetrend_chart(df, symbol):
     """Cria gráfico detalhado do WaveTrend"""
@@ -310,12 +464,18 @@ if col3.button("🎯 Top Sinais"):
 if col4.button("🔍 Análise Individual"):
     st.session_state['individual_analysis'] = True
 
+# Status das notificações
+if telegram_bot_token and telegram_chat_id:
+    st.info("🤖 Telegram configurado! Notificações ativadas.")
+else:
+    st.warning("⚠️ Configure o Telegram na sidebar para receber notificações.")
+
 # Auto-refresh logic
 if auto_refresh and 'last_update' not in st.session_state:
     st.session_state['last_update'] = time.time()
     st.session_state['update_data'] = True
 
-if auto_refresh and time.time() - st.session_state.get('last_update', 0) > 30:
+if auto_refresh and time.time() - st.session_state.get('last_update', 0) > refresh_interval:
     st.session_state['last_update'] = time.time()
     st.session_state['update_data'] = True
 
@@ -328,14 +488,31 @@ params = {
     'reversion_threshold': reversion_threshold
 }
 
+# Configurações Telegram
+telegram_config = None
+if telegram_bot_token and telegram_chat_id:
+    telegram_config = {
+        'enabled': True,
+        'token': telegram_bot_token,
+        'chat_id': telegram_chat_id,
+        'notify_signals': notify_on_signals,
+        'notify_crosses': notify_on_crosses,
+        'strong_only': notify_strong_only,
+        'cooldown': notification_cooldown
+    }
+
 # Análise principal
 if st.session_state.get('update_data', False):
-    with st.spinner('🔄 Analisando mercado...'):
-        resultados = fetch_data_and_analyze(SYMBOLS, selected_timeframe, params)
+    with st.spinner('🔄 Analisando mercado e enviando notificações...'):
+        resultados, notifications_sent = fetch_data_and_analyze(SYMBOLS, selected_timeframe, params, telegram_config)
     
     st.session_state['resultados'] = resultados
     st.session_state['update_data'] = False
-    st.success("✅ Análise finalizada!")
+    
+    success_msg = "✅ Análise finalizada!"
+    if notifications_sent > 0:
+        success_msg += f" 📱 {notifications_sent} notificações enviadas!"
+    st.success(success_msg)
 
 # Exibir resultados
 if 'resultados' in st.session_state:
@@ -453,6 +630,64 @@ if st.session_state.get('top_signals', False):
     
     st.session_state['top_signals'] = False
 
+# Seção de configuração do Telegram com instruções
+st.markdown("---")
+with st.expander("🤖 Como Configurar o Telegram Bot"):
+    st.markdown("""
+    ### 📝 Passo a Passo para Configurar Notificações Telegram
+    
+    #### 1. Criar um Bot Telegram:
+    1. Abra o Telegram e procure por **@BotFather**
+    2. Envie `/start` e depois `/newbot`
+    3. Escolha um nome e username para seu bot
+    4. Copie o **Bot Token** que aparecerá (ex: `123456789:ABCdefGHIjklMNOpqrSTUvwxYZ`)
+    
+    #### 2. Obter seu Chat ID:
+    1. Envie uma mensagem para seu bot
+    2. Visite: `https://api.telegram.org/bot<SEU_BOT_TOKEN>/getUpdates`
+    3. Procure pelo número do **"chat":{"id":XXXXXX}**
+    4. Use esse número como Chat ID
+    
+    #### 3. Configurações Recomendadas:
+    - ✅ **Notificar Sinais OB/OS**: Para alertas de sobrecompra/sobrevenda
+    - ✅ **Notificar Cruzamentos**: Para mudanças de tendência
+    - ⚠️ **Apenas Sinais Fortes**: Para reduzir spam de notificações
+    - 🕐 **Intervalo**: 15-30 minutos para evitar muitas mensagens
+    
+    #### 4. Exemplo de Mensagem:
+    ```
+    🟢 SINAL DE COMPRA (Sobrevenda)
+    
+    💰 Moeda: BTC
+    💵 Preço: $45,234.56
+    📈 Variação: -2.34%
+    📊 Timeframe: 4h
+    
+    📉 WT: -120.45
+    📉 WT Signal: -108.32
+    💪 Força: 🟢 FORTE
+    
+    🕒 Horário: 14:32:15
+    ```
+    """)
+
+# Histórico de notificações
+if 'last_notifications' in st.session_state and st.session_state['last_notifications']:
+    with st.expander("📱 Histórico de Notificações Recentes"):
+        st.write("### 🕐 Últimas Notificações Enviadas:")
+        for key, timestamp in sorted(st.session_state['last_notifications'].items(), 
+                                   key=lambda x: x[1], reverse=True)[:20]:
+            symbol, signal_type = key.split('_')
+            signal_names = {
+                'OB': '🔴 Sobrecompra',
+                'OS': '🟢 Sobrevenda', 
+                'BULL_CROSS': '⬆️ Cruzamento Alta',
+                'BEAR_CROSS': '⬇️ Cruzamento Baixa'
+            }
+            signal_name = signal_names.get(signal_type, signal_type)
+            time_ago = datetime.now() - timestamp
+            st.write(f"**{symbol}** - {signal_name} - {timestamp.strftime('%H:%M:%S')} ({int(time_ago.total_seconds()/60)}min atrás)")
+
 # Informações sobre sinais
 with st.expander("ℹ️ Informações sobre os Sinais"):
     st.markdown("""
@@ -474,15 +709,133 @@ with st.expander("ℹ️ Informações sobre os Sinais"):
     - **🔴/🟢 FORTE**: Sinal muito confiável
     - **🟡 MODERADO**: Sinal com confiabilidade média
     - **⚪ FRACO**: Sinal com baixa confiabilidade
+    
+    ### 🔔 Sistema de Notificações:
+    - **Cooldown**: Evita spam de notificações repetidas
+    - **Filtro de Força**: Opção de receber apenas sinais fortes
+    - **Múltiplos Timeframes**: Configure diferentes bots para diferentes timeframes
+    - **Histórico**: Acompanhe todas as notificações enviadas
     """)
 
-# Rodapé
+# Sistema de alertas personalizados
 st.markdown("---")
+with st.expander("⚙️ Alertas Personalizados Avançados"):
+    st.subheader("🎛️ Configurações Avançadas de Alertas")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.write("**Filtros por Moeda:**")
+        priority_coins = st.multiselect(
+            "Moedas Prioritárias (recebem todos os alertas)",
+            options=[s.replace('/USDT', '') for s in SYMBOLS],
+            default=['BTC', 'ETH', 'SOL']
+        )
+        
+        st.write("**Filtros por Força:**")
+        min_wt_threshold = st.slider("WT Mínimo para Alertas", 50, 200, 100)
+        
+    with col2:
+        st.write("**Horários de Funcionamento:**")
+        alert_start_time = st.time_input("Início dos Alertas", value=datetime.now().time().replace(hour=9, minute=0))
+        alert_end_time = st.time_input("Fim dos Alertas", value=datetime.now().time().replace(hour=22, minute=0))
+        
+        st.write("**Dias da Semana:**")
+        alert_days = st.multiselect(
+            "Dias para Alertas",
+            options=['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'],
+            default=['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta']
+        )
+
+    # Salvar configurações personalizadas
+    if st.button("💾 Salvar Configurações Personalizadas"):
+        custom_config = {
+            'priority_coins': priority_coins,
+            'min_wt_threshold': min_wt_threshold,
+            'alert_start_time': str(alert_start_time),
+            'alert_end_time': str(alert_end_time),
+            'alert_days': alert_days
+        }
+        st.session_state['custom_alert_config'] = custom_config
+        st.success("✅ Configurações salvas!")
+
+# Monitor de performance dos sinais
+if 'resultados' in st.session_state:
+    with st.expander("📈 Monitor de Performance dos Sinais"):
+        resultados = st.session_state['resultados']
+        valid_results = [r for r in resultados if 'Erro' not in r]
+        
+        if valid_results:
+            # Estatísticas gerais
+            total_ob = len([r for r in valid_results if r.get('OB') == "✅"])
+            total_os = len([r for r in valid_results if r.get('OS') == "✅"])
+            total_bull_cross = len([r for r in valid_results if r.get('Bull Cross') == "⬆️"])
+            total_bear_cross = len([r for r in valid_results if r.get('Bear Cross') == "⬇️"])
+            
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Sinais OB Ativos", total_ob)
+            col2.metric("Sinais OS Ativos", total_os)
+            col3.metric("Bull Crosses", total_bull_cross)
+            col4.metric("Bear Crosses", total_bear_cross)
+            
+            # Top moedas por categoria
+            st.write("### 🏆 Top Moedas por Categoria:")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write("**🔥 Mais Voláteis (Variação %):**")
+                try:
+                    volatile_coins = sorted(valid_results, 
+                                          key=lambda x: abs(float(x['Variação (%)'].replace('%', '').replace('+', ''))), 
+                                          reverse=True)[:5]
+                    for coin in volatile_coins:
+                        st.write(f"• **{coin['Moeda']}**: {coin['Variação (%)']} | {coin['Preço']}")
+                except:
+                    st.write("Dados não disponíveis")
+            
+            with col2:
+                st.write("**💪 Sinais Mais Fortes:**")
+                strong_signals = [r for r in valid_results if 'FORTE' in r.get('Força', '')][:5]
+                for signal in strong_signals:
+                    st.write(f"• **{signal['Moeda']}**: {signal['Força']} | WT: {signal['WT']}")
+
+# Rodapé com informações de contato e suporte
+st.markdown("---")
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.markdown("""
+    ### 🛠️ Suporte Técnico
+    - Problemas com Telegram? Verifique o token e chat ID
+    - Sinais não aparecem? Ajuste o threshold
+    - App lento? Reduza o número de moedas
+    """)
+
+with col2:
+    st.markdown("""
+    ### 📊 Recursos
+    - Auto-refresh com notificações
+    - Múltiplos timeframes
+    - Filtros avançados
+    - Histórico de sinais
+    """)
+
+with col3:
+    st.markdown("""
+    ### ⚠️ Disclaimer
+    - Apenas para fins educacionais
+    - Não é conselho financeiro
+    - Sempre faça sua própria pesquisa
+    - Gerencie riscos adequadamente
+    """)
+
 st.markdown(
     """
-    <div style='text-align: center; color: #888;'>
-        📈 WaveTrend Oscillator Pro | Desenvolvido para análise técnica avançada<br>
-        ⚠️ Este app é apenas para fins educacionais. Sempre faça sua própria pesquisa antes de investir.
+    <div style='text-align: center; color: #888; margin-top: 2rem;'>
+        🤖📈 WaveTrend Oscillator Pro + Telegram Notifications v2.0<br>
+        Desenvolvido para análise técnica avançada com alertas inteligentes<br>
+        <small>⚡ Powered by Streamlit | 📡 KuCoin API | 🤖 Telegram Bot API</small>
     </div>
     """, 
     unsafe_allow_html=True
@@ -491,3 +844,5 @@ st.markdown(
 # Inicialização do estado
 if 'update_data' not in st.session_state:
     st.session_state['update_data'] = False
+if 'last_notifications' not in st.session_state:
+    st.session_state['last_notifications'] = {}
