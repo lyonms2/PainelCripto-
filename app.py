@@ -114,21 +114,7 @@ if auto_refresh:
     refresh_interval = st.sidebar.slider("Intervalo de refresh (segundos)", 30, 300, 60)
     st.sidebar.write(f"🔄 Próxima atualização em {refresh_interval}s")
 
-# Símbolos principais
-SYMBOLS = [
-    'BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'HYPE/USDT', 'PUMP/USDT', 'ENA/USDT', 
-    'FARTCOIN/USDT', 'BONK/USDT', 'BNB/USDT', 'ADA/USDT', 'XRP/USDT', 'DOGE/USDT',
-    'TRX/USDT', 'LINK/USDT', 'LTC/USDT','PENGU/USDT', 'DOT/USDT', 'BCH/USDT', 
-    'SHIB/USDT', 'AVAX/USDT', 'OP/USDT', 'UNI/USDT', 'ATOM/USDT', 'ETC/USDT', 
-    'XLM/USDT', 'FIL/USDT', 'APT/USDT', 'SUI/USDT', 'HBAR/USDT', 'ZORA/USDT', 
-    'AR/USDT', 'INJ/USDT', 'PEPE/USDT', 'NEAR/USDT', 'STX/USDT', 'ALGO/USDT', 
-    'IMX/USDT', 'WIF/USDT', 'MINA/USDT', 'DYDX/USDT', 'TIA/USDT', 'JTO/USDT', 
-    'AAVE/USDT', 'PYTH/USDT', 'SAND/USDT', 'CAKE/USDT', 'BLUR/USDT', 
-    'GMX/USDT', 'LDO/USDT', 'FET/USDT', 'DYM/USDT', 'GMT/USDT', 'MEME/USDT', 
-    'BOME/USDT', 'YGG/USDT', 'RUNE/USDT', 'CELO/USDT', 'WLD/USDT', 'ONDO/USDT', 
-    'SEI/USDT', 'JUP/USDT', 'POPCAT/USDT', 'TAO/USDT', 'TON/USDT'
-]
-
+# Funções auxiliares (definidas antes de serem usadas)
 def send_telegram_message(bot_token, chat_id, message):
     """Envia mensagem via Telegram"""
     try:
@@ -183,9 +169,20 @@ def format_telegram_alert(symbol, signal_type, data, timeframe):
 ⚠️ <i>Sempre faça sua própria análise antes de operar!</i>
     """.strip()
     
-    return message
-
-@st.cache_data(ttl=30)
+# Símbolos principais
+SYMBOLS = [
+    'BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'HYPE/USDT', 'PUMP/USDT', 'ENA/USDT', 
+    'FARTCOIN/USDT', 'BONK/USDT', 'BNB/USDT', 'ADA/USDT', 'XRP/USDT', 'DOGE/USDT',
+    'TRX/USDT', 'LINK/USDT', 'LTC/USDT','PENGU/USDT', 'DOT/USDT', 'BCH/USDT', 
+    'SHIB/USDT', 'AVAX/USDT', 'OP/USDT', 'UNI/USDT', 'ATOM/USDT', 'ETC/USDT', 
+    'XLM/USDT', 'FIL/USDT', 'APT/USDT', 'SUI/USDT', 'HBAR/USDT', 'ZORA/USDT', 
+    'AR/USDT', 'INJ/USDT', 'PEPE/USDT', 'NEAR/USDT', 'STX/USDT', 'ALGO/USDT', 
+    'IMX/USDT', 'WIF/USDT', 'MINA/USDT', 'DYDX/USDT', 'TIA/USDT', 'JTO/USDT', 
+    'AAVE/USDT', 'PYTH/USDT', 'SAND/USDT', 'CAKE/USDT', 'BLUR/USDT', 
+    'GMX/USDT', 'LDO/USDT', 'FET/USDT', 'DYM/USDT', 'GMT/USDT', 'MEME/USDT', 
+    'BOME/USDT', 'YGG/USDT', 'RUNE/USDT', 'CELO/USDT', 'WLD/USDT', 'ONDO/USDT', 
+    'SEI/USDT', 'JUP/USDT', 'POPCAT/USDT', 'TAO/USDT', 'TON/USDT'
+]
 def calculate_wavetrend(df, src='hlc3', channel_length=10, average_length=21, 
                        signal_length=4, reversion_threshold=100):
     """Calcula o WaveTrend Oscillator com cache"""
