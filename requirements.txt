@@ -1,5 +1,6 @@
 # Streamlit e interface
 streamlit>=1.28.0
+streamlit-extras
 
 # Trading e dados de mercado
 ccxt>=4.1.0
